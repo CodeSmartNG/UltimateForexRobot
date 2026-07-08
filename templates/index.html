@@ -1,1 +1,187 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ultimate Forex Bot - AI Trading Platform</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+<nav class="navbar">
+    <div class="container nav-container">
+        <a href="#" class="logo">Ultimate <span>FX</span></a>
+        <button class="mobile-menu-btn" id="mobileMenuBtn"><i class="fas fa-bars"></i></button>
+        <ul class="nav-links" id="navLinks">
+            <li><a href="#dashboard">Dashboard</a></li>
+            <li><a href="#trading">Trading</a></li>
+            <li><a href="#robot">Robot</a></li>
+            <li><a href="#contact">Contact</a></li>
+            <li><a href="#" class="btn-login" id="navLoginBtn" onclick="openLoginModal()"><i class="fas fa-user"></i> Login</a></li>
+        </ul>
+    </div>
+</nav>
+
+<section class="hero">
+    <div class="container">
+        <h1>Trade Smarter with <span>AI-Powered</span> Forex Bot</h1>
+        <p>Automate your trading strategy with our advanced AI robot.</p>
+        <div class="hero-buttons">
+            <a href="#dashboard" class="btn btn-primary"><i class="fas fa-rocket"></i> Start Trading</a>
+            <a href="#robot" class="btn btn-secondary"><i class="fas fa-robot"></i> Explore Bot</a>
+        </div>
+    </div>
+</section>
+
+<section class="container" id="dashboard">
+    <div class="stats-grid">
+        <div class="stat-card"><div class="number" id="balance">--</div><div class="label">Balance</div></div>
+        <div class="stat-card"><div class="number" id="equity">--</div><div class="label">Equity</div></div>
+        <div class="stat-card"><div class="number profit" id="profit">--</div><div class="label">Total Profit</div></div>
+        <div class="stat-card"><div class="number" id="winRate">--</div><div class="label">Win Rate</div></div>
+    </div>
+</section>
+
+<section class="container" id="trading">
+    <div class="dashboard-grid">
+        <div class="panel">
+            <div class="panel-header">
+                <h3><i class="fas fa-chart-line"></i> Trade Now</h3>
+                <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                    <span class="badge" id="connectionBadge">Disconnected</span>
+                    <span id="userDisplay" style="font-size:0.8rem; color:#888;"></span>
+                    <button class="btn btn-danger btn-sm" onclick="logout()">Logout</button>
+                </div>
+            </div>
+            
+            <form class="trade-form" id="tradeForm">
+                <select id="tradeSymbol">
+                    <option value="EURUSD">EUR/USD</option>
+                    <option value="GBPUSD">GBP/USD</option>
+                    <option value="USDJPY">USD/JPY</option>
+                    <option value="AUDUSD">AUD/USD</option>
+                    <option value="XAUUSD">Gold (XAU/USD)</option>
+                </select>
+                <select id="tradeType">
+                    <option value="buy">BUY (Long)</option>
+                    <option value="sell">SELL (Short)</option>
+                </select>
+                <input type="number" id="tradeVolume" placeholder="Volume (0.01 - 1.00)" step="0.01" min="0.01" max="1.0" value="0.01">
+                <input type="number" id="tradeStopLoss" placeholder="Stop Loss (optional)" step="0.0001">
+                <input type="number" id="tradeTakeProfit" placeholder="Take Profit (optional)" step="0.0001">
+                <div class="trade-buttons">
+                    <button type="button" class="btn btn-success" id="tradeBuyBtn" onclick="placeTrade('buy')"><i class="fas fa-arrow-up"></i> BUY</button>
+                    <button type="button" class="btn btn-danger" id="tradeSellBtn" onclick="placeTrade('sell')"><i class="fas fa-arrow-down"></i> SELL</button>
+                </div>
+            </form>
+
+            <div style="margin-top: 1.5rem;">
+                <h4>Open Positions</h4>
+                <div id="openTrades"><p style="opacity:0.5; text-align:center;">No open trades</p></div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-header">
+                <h3><i class="fas fa-bullhorn"></i> Live Signals</h3>
+                <button class="btn btn-primary btn-sm" onclick="generateSignal()"><i class="fas fa-sync"></i> Generate</button>
+            </div>
+            <div id="signalsList"><p style="opacity:0.5; text-align:center;">No signals available</p></div>
+            
+            <div style="margin-top: 1rem;">
+                <h4>Trade Log</h4>
+                <div class="log-container" id="tradeLogs"><p style="opacity:0.5; text-align:center;">No trades executed</p></div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="container" id="robot">
+    <div class="dashboard-grid">
+        <div class="panel">
+            <div class="panel-header">
+                <h3><i class="fas fa-robot"></i> Ultimate Forex Bot</h3>
+                <span class="badge" id="robotStatusBadge">OFF</span>
+            </div>
+            <div class="robot-controls">
+                <div class="robot-status">
+                    <div class="status-dot inactive" id="robotStatusDot"></div>
+                    <span id="robotStatusText">Robot is offline</span>
+                    <button class="btn btn-success" id="robotToggleBtn"><i class="fas fa-play"></i> Start</button>
+                </div>
+                <div class="robot-config">
+                    <label>Strategy</label>
+                    <select id="robotStrategy">
+                        <option value="daytrading" selected>Day Trading</option>
+                        <option value="scalping">Scalping</option>
+                        <option value="swing">Swing Trading</option>
+                    </select>
+                    <label>Risk Level</label>
+                    <select id="robotRisk">
+                        <option value="low">Low</option>
+                        <option value="medium" selected>Medium</option>
+                        <option value="high">High</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-header"><h3><i class="fas fa-chart-pie"></i> Performance</h3></div>
+            <div style="display:grid; gap:0.5rem;">
+                <div style="display:flex; justify-content:space-between;"><span>Total Trades</span><span id="perfTotalTrades">0</span></div>
+                <div style="display:flex; justify-content:space-between;"><span>Winning Trades</span><span id="perfWins" style="color:var(--success);">0</span></div>
+                <div style="display:flex; justify-content:space-between;"><span>Losing Trades</span><span id="perfLosses" style="color:var(--danger);">0</span></div>
+                <div style="display:flex; justify-content:space-between;"><span>Win Rate</span><span id="perfWinRate" style="color:var(--warning);">0%</span></div>
+                <div style="display:flex; justify-content:space-between;"><span>Total Profit</span><span id="perfProfit" style="color:var(--success);">$0</span></div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="container" id="contact" style="padding:60px 0;">
+    <div class="panel" style="max-width:600px; margin:0 auto;">
+        <h3 style="text-align:center; margin-bottom:1.5rem;">Contact Support</h3>
+        <form id="contactForm">
+            <input type="text" id="contactName" placeholder="Your Name" required style="width:100%; padding:12px; margin-bottom:12px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.05); color:white;">
+            <input type="email" id="contactEmail" placeholder="Email" required style="width:100%; padding:12px; margin-bottom:12px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.05); color:white;">
+            <textarea id="contactMessage" placeholder="Your Message" required style="width:100%; padding:12px; margin-bottom:12px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.05); color:white; min-height:100px;"></textarea>
+            <button type="submit" class="btn btn-primary" style="width:100%;"><i class="fas fa-paper-plane"></i> Send Message</button>
+        </form>
+    </div>
+</section>
+
+<!-- Login Modal -->
+<div class="modal" id="loginModal">
+    <div class="modal-content">
+        <button class="modal-close" onclick="closeLoginModal()">&times;</button>
+        <h2>🔐 Login to Broker</h2>
+        <p class="subtitle">Enter your MT5 account credentials</p>
+        <form id="loginForm" onsubmit="handleLogin(event)">
+            <input type="text" id="loginUsername" placeholder="Username / Login" required>
+            <input type="password" id="loginPassword" placeholder="Password" required>
+            <input type="text" id="loginServer" placeholder="Server (e.g., Headway-Demo)" value="Headway-Demo">
+            <div style="margin-bottom: 12px;">
+                <label style="color:#94a3b8; font-size:14px;">Broker Type</label>
+                <select id="loginBrokerType" style="width:100%; padding:12px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.05); color:white; font-size:15px;">
+                    <option value="mt5">MetaTrader 5 (MT5)</option>
+                    <option value="paper">Paper Trading</option>
+                    <option value="demo">Demo Mode</option>
+                </select>
+            </div>
+            <div id="loginError" class="login-error"></div>
+            <div id="loginSuccess" class="login-success"></div>
+            <button type="submit" class="login-submit"><i class="fas fa-sign-in-alt"></i> LOGIN</button>
+        </form>
+    </div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.js"></script>
+<script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>
