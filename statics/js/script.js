@@ -1,17 +1,28 @@
-// static/js/script.js - Complete with deployment fixes
+// static/js/script.js - Complete with production fix
 
 // ============================================================
-// API CONFIGURATION
+// API CONFIGURATION - AUTO-DETECT ENVIRONMENT
 // ============================================================
 
-// Detect if we're in production or development
-const isProduction = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+// Get the current hostname
+const currentHost = window.location.hostname;
+const currentPort = window.location.port;
 
-// Set API base URL
+// Determine if we're in production or development
+const isProduction = currentHost !== 'localhost' && currentHost !== '127.0.0.1';
+
+// Set the API base URL
+// In production: use the same domain (relative paths)
+// In development: use localhost:5000
 const API_BASE_URL = isProduction ? '' : 'http://localhost:5000';
 
-// Set Socket URL
+// Socket connection URL
 const SOCKET_URL = isProduction ? window.location.origin : 'http://localhost:5000';
+
+// Log the configuration for debugging
+console.log('🔧 Environment:', isProduction ? 'Production' : 'Development');
+console.log('🔧 API Base URL:', API_BASE_URL || '(same origin)');
+console.log('🔧 Socket URL:', SOCKET_URL);
 
 // ============================================================
 // SOCKET CONNECTION
@@ -19,50 +30,109 @@ const SOCKET_URL = isProduction ? window.location.origin : 'http://localhost:500
 
 const socket = io(SOCKET_URL, {
     reconnection: true,
-    reconnectionAttempts: 5,
-    reconnectionDelay: 1000
+    reconnectionAttempts: 10,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000,
+    timeout: 20000
 });
 
 // Socket connection events
 socket.on('connect', function() {
     console.log('✅ Socket connected to:', SOCKET_URL);
     showToast('Connected to server', 'success');
+    // Try to get initial data after connection
+    refreshData();
 });
 
 socket.on('connect_error', function(error) {
-    console.error('Socket connection error:', error);
-    showToast('Connection error. Retrying...', 'error');
+    console.error('❌ Socket connection error:', error);
+    showToast('⚠️ Connection to server failed. Retrying...', 'error');
 });
 
 socket.on('disconnect', function() {
-    console.log('Socket disconnected');
+    console.log('🔌 Socket disconnected');
 });
 
 // ============================================================
-// API HELPER
+// API HELPER WITH BETTER ERROR HANDLING
 // ============================================================
 
 async function apiRequest(endpoint, method = 'GET', data = null) {
-    const url = API_BASE_URL + endpoint;
+    // Build the URL
+    let url = endpoint;
+    if (API_BASE_URL) {
+        url = API_BASE_URL + endpoint;
+    }
+    
     const options = { 
         method, 
-        headers: { 'Content-Type': 'application/json' } 
+        headers: { 
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        } 
     };
+    
     if (data && (method === 'POST' || method === 'PUT')) {
         options.body = JSON.stringify(data);
     }
     
+    console.log(`📡 API Request: ${method} ${url}`);
+    
     try {
         const response = await fetch(url, options);
+        
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-        return await response.json();
+        
+        const result = await response.json();
+        console.log(`📡 API Response:`, result);
+        return result;
+        
     } catch (error) {
-        console.error('API Request failed:', error);
-        showToast('Network error. Please check your connection.', 'error');
+        console.error('❌ API Request failed:', error);
+        showToast(`⚠️ Network error: ${error.message}`, 'error');
         throw error;
     }
+}
+
+// ============================================================
+// REFRESH DATA FUNCTION
+// ============================================================
+
+async function refreshData() {
+    try {
+        const status = await apiRequest('/api/status');
+        if (status.account) {
+            document.getElementById('balance').textContent = '$' + (status.account.balance || 10000).toFixed(2);
+            document.getElementById('equity').textContent = '$' + (status.account.equity || 10000).toFixed(2);
+        }
+        if (status.positions) updateOpenTrades(status.positions);
+        if (status.performance) updatePerformance(status.performance);
+        if (status.running) updateRobotUI(true);
+        if (status.broker_connected) {
+            updateBrokerUI(true, status.broker_type);
+            document.getElementById('userDisplay').textContent = '👤 ' + (status.current_user || 'User');
+        }
+        if (status.trade_logs) updateTradeLogs(status.trade_logs);
+        return true;
+    } catch (error) {
+        console.error('Refresh error:', error);
+        return false;
+    }
+}
+
+// ============================================================
+// TOAST NOTIFICATIONS
+// ============================================================
+
+function showToast(message, type = 'info') {
+    const container = document.getElementById('toastContainer');
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    container.appendChild(toast);
+    setTimeout(() => toast.remove(), 5000);
 }
 
 // ============================================================
@@ -101,21 +171,8 @@ socket.on('trade_log', function(data) {
 });
 
 socket.on('log_message', function(data) {
-    addLogMessage(data.message);
+    // Optional: display log messages
 });
-
-// ============================================================
-// TOAST NOTIFICATIONS
-// ============================================================
-
-function showToast(message, type = 'info') {
-    const container = document.getElementById('toastContainer');
-    const toast = document.createElement('div');
-    toast.className = `toast toast-${type}`;
-    toast.textContent = message;
-    container.appendChild(toast);
-    setTimeout(() => toast.remove(), 5000);
-}
 
 // ============================================================
 // LOGIN FUNCTIONS
@@ -284,8 +341,6 @@ function updateTradeLogs(logs) {
     `).join('');
 }
 
-function addLogMessage(message) {}
-
 // ============================================================
 // TRADING FUNCTIONS
 // ============================================================
@@ -398,27 +453,52 @@ document.getElementById('mobileMenuBtn').addEventListener('click', function() {
 // INITIALIZATION
 // ============================================================
 
-document.addEventListener('DOMContentLoaded', async () => {
-    try {
-        const status = await apiRequest('/api/status');
-        if (status.account) {
-            document.getElementById('balance').textContent = '$' + (status.account.balance || 10000).toFixed(2);
-            document.getElementById('equity').textContent = '$' + (status.account.equity || 10000).toFixed(2);
+document.addEventListener('DOMContentLoaded', async function() {
+    console.log('🚀 Page loaded, initializing...');
+    
+    // Try to connect and get data
+    let connected = false;
+    let attempts = 0;
+    const maxAttempts = 5;
+    
+    while (!connected && attempts < maxAttempts) {
+        attempts++;
+        console.log(`🔄 Connection attempt ${attempts}/${maxAttempts}`);
+        
+        try {
+            const status = await apiRequest('/api/status');
+            if (status) {
+                connected = true;
+                console.log('✅ Connected successfully!');
+                showToast('Connected to server', 'success');
+                
+                // Update all UI elements
+                if (status.account) {
+                    document.getElementById('balance').textContent = '$' + (status.account.balance || 10000).toFixed(2);
+                    document.getElementById('equity').textContent = '$' + (status.account.equity || 10000).toFixed(2);
+                }
+                if (status.positions) updateOpenTrades(status.positions);
+                if (status.performance) updatePerformance(status.performance);
+                if (status.running) updateRobotUI(true);
+                if (status.broker_connected) {
+                    updateBrokerUI(true, status.broker_type);
+                    document.getElementById('userDisplay').textContent = '👤 ' + (status.current_user || 'User');
+                }
+                if (status.trade_logs) updateTradeLogs(status.trade_logs);
+            }
+        } catch (error) {
+            console.error(`❌ Attempt ${attempts} failed:`, error);
+            if (attempts < maxAttempts) {
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
         }
-        if (status.positions) updateOpenTrades(status.positions);
-        if (status.performance) updatePerformance(status.performance);
-        if (status.running) updateRobotUI(true);
-        if (status.broker_connected) {
-            updateBrokerUI(true, status.broker_type);
-            document.getElementById('userDisplay').textContent = '👤 ' + (status.current_user || 'User');
-        }
-        if (status.trade_logs) updateTradeLogs(status.trade_logs);
-    } catch (error) {
-        console.error('Init error:', error);
-        showToast('Failed to connect to server. Retrying...', 'error');
+    }
+    
+    if (!connected) {
+        showToast('⚠️ Could not connect to server. Please refresh the page.', 'error');
     }
 
-    // Auto-refresh every 10 seconds
+    // Auto-refresh every 30 seconds
     setInterval(async () => {
         try {
             const status = await apiRequest('/api/status');
@@ -429,7 +509,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         } catch (error) {
             // Silent refresh
         }
-    }, 10000);
+    }, 30000);
 });
 
 console.log('Ultimate Forex Bot UI loaded!');
+console.log('🔧 Environment:', window.location.hostname === 'localhost' ? 'Development' : 'Production');
+console.log('🔧 API will use:', window.location.hostname === 'localhost' ? 'http://localhost:5000' : 'same origin');
