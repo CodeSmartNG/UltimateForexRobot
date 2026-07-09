@@ -1,6 +1,7 @@
-# app.py - Complete Flask Backend
+# app.py - Updated to handle missing MT5
 from flask import Flask, render_template, request, jsonify, session
 from flask_socketio import SocketIO, emit
+from flask_cors import CORS
 import threading
 import time
 import json
@@ -15,14 +16,93 @@ import hashlib
 try:
     import MetaTrader5 as mt5
     BOT_AVAILABLE = True
+    print("✅ MetaTrader5 loaded successfully")
 except ImportError:
     BOT_AVAILABLE = False
-    print("Warning: MT5 not available. Running in demo mode.")
+    print("⚠️ MetaTrader5 not available - running in demo mode")
+    
+    # Create dummy MT5 class for demo mode
+    class DummyMT5:
+        TIMEFRAME_M15 = 15
+        TIMEFRAME_H1 = 60
+        TIMEFRAME_H4 = 240
+        TIMEFRAME_D1 = 1440
+        
+        def account_info(self):
+            class Account:
+                balance = 10000
+                equity = 10000
+                login = "DEMO123"
+                server = "Demo Server"
+            return Account()
+        
+        def initialize(self):
+            return True
+        
+        def shutdown(self):
+            pass
+        
+        def copy_rates_from_pos(self, symbol, timeframe, pos, count):
+            data = []
+            price = 1.1000
+            for i in range(count):
+                price += random.uniform(-0.001, 0.001)
+                data.append((
+                    int(time.time()) - (count - i) * 60,
+                    price - 0.0001,
+                    price + 0.0002,
+                    price - 0.0002,
+                    price,
+                    random.randint(100, 1000),
+                    0,
+                    0
+                ))
+            return data
+        
+        def symbol_info_tick(self, symbol):
+            class Tick:
+                bid = 1.1000
+                ask = 1.1002
+            return Tick()
+        
+        def positions_get(self):
+            return None
+    
+    mt5 = DummyMT5()
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'trading-bot-secret-key-2024'
 app.config['SESSION_TYPE'] = 'filesystem'
+
+# Enable CORS for all origins
+CORS(app, origins="*")
 socketio = SocketIO(app, cors_allowed_origins="*")
+
+# ============================================================
+# DEMO DATA GENERATOR
+# ============================================================
+
+def generate_demo_data(bars=200):
+    data = []
+    price = 1.1000
+    trend = 0
+    for i in range(bars):
+        trend += random.uniform(-0.0005, 0.0005)
+        if random.random() < 0.05:
+            trend = random.uniform(-0.001, 0.001)
+        
+        price += trend + random.uniform(-0.0003, 0.0003)
+        price = max(1.0500, min(1.1500, price))
+        
+        data.append({
+            'time': int(time.time()) - (bars - i) * 60,
+            'open': price - random.uniform(0.0001, 0.0003),
+            'high': price + random.uniform(0.0002, 0.0005),
+            'low': price - random.uniform(0.0002, 0.0005),
+            'close': price,
+            'tick_volume': random.randint(100, 2000)
+        })
+    return data
 
 # ============================================================
 # USER SESSION MANAGEMENT
@@ -62,32 +142,6 @@ def authenticate_user(username, password):
         if users[username].password == hash_password(password):
             return users[username]
     return None
-
-# ============================================================
-# DEMO DATA GENERATOR
-# ============================================================
-
-def generate_demo_data(bars=200):
-    data = []
-    price = 1.1000
-    trend = 0
-    for i in range(bars):
-        trend += random.uniform(-0.0005, 0.0005)
-        if random.random() < 0.05:
-            trend = random.uniform(-0.001, 0.001)
-        
-        price += trend + random.uniform(-0.0003, 0.0003)
-        price = max(1.0500, min(1.1500, price))
-        
-        data.append({
-            'time': int(time.time()) - (bars - i) * 60,
-            'open': price - random.uniform(0.0001, 0.0003),
-            'high': price + random.uniform(0.0002, 0.0005),
-            'low': price - random.uniform(0.0002, 0.0005),
-            'close': price,
-            'tick_volume': random.randint(100, 2000)
-        })
-    return data
 
 # ============================================================
 # MARKET ANALYSIS CLASSES
@@ -441,8 +495,6 @@ def sync_positions():
                 
                 bot_state['positions'] = mt5_positions
                 socketio.emit('positions_updated', {'positions': bot_state['positions']})
-                
-                total_profit = sum(p.get('profit', 0) for p in mt5_positions)
                 print(f'📊 Synced {len(mt5_positions)} positions from MT5')
             else:
                 if bot_state['positions']:
@@ -779,7 +831,6 @@ def place_trade():
         return jsonify({'success': False, 'error': 'Broker not connected'})
     
     try:
-        # Get current price based on trade type
         if BOT_AVAILABLE and bot_state['broker_type'] == 'MT5':
             tick = mt5.symbol_info_tick(symbol)
             if tick:
@@ -795,7 +846,6 @@ def place_trade():
             price = 1.1000 + random.uniform(-0.001, 0.001)
             print(f'💰 Simulated price: {price:.5f}')
         
-        # Calculate SL and TP if not provided
         atr = bot_state.get('analysis', {}).get('technical', {}).get('volatility', {}).get('atr', 0.001)
         if sl == 0:
             sl_distance = atr * 1.5
@@ -806,7 +856,6 @@ def place_trade():
             tp = price + tp_distance if trade_type == 'buy' else price - tp_distance
             print(f'📈 Auto TP: {tp:.5f}')
         
-        # Execute trade based on broker type
         if bot_state['broker_type'] == 'MT5' and BOT_AVAILABLE:
             result = execute_mt5_trade(symbol, trade_type, volume, price, sl, tp)
         else:
@@ -958,10 +1007,6 @@ def execute_demo_trade(symbol, trade_type, volume, price, sl, tp):
     
     return {'success': True, 'ticket': ticket, 'position': position}
 
-# ============================================================
-# CLOSE TRADE
-# ============================================================
-
 @app.route('/api/trading/close/<trade_id>', methods=['POST'])
 def close_trade(trade_id):
     print(f'📊 Closing trade: {trade_id}')
@@ -979,9 +1024,8 @@ def close_trade(trade_id):
     try:
         ticket = int(position_to_close.get('ticket'))
         symbol = position_to_close.get('symbol')
-        position_type = position_to_close.get('type')
         
-        print(f'📊 Found position: Ticket={ticket}, Symbol={symbol}, Type={position_type}')
+        print(f'📊 Found position: Ticket={ticket}, Symbol={symbol}')
         
         if bot_state['broker_type'] == 'MT5' and BOT_AVAILABLE:
             positions = mt5.positions_get(ticket=ticket)
