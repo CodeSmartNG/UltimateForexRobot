@@ -1,8 +1,6 @@
-# app.py - Add CORS support
-
+# app.py - Complete Flask Backend
 from flask import Flask, render_template, request, jsonify, session
 from flask_socketio import SocketIO, emit
-from flask_cors import CORS  # <-- ADD THIS
 import threading
 import time
 import json
@@ -12,20 +10,6 @@ import math
 from datetime import datetime
 from collections import deque
 import hashlib
-
-app = Flask(__name__)
-app.config['SECRET_KEY'] = 'trading-bot-secret-key-2024'
-app.config['SESSION_TYPE'] = 'filesystem'
-
-# Enable CORS for all domains (important for deployment)
-CORS(app, origins="*")  # <-- ADD THIS
-
-# Update socketio with CORS
-socketio = SocketIO(app, cors_allowed_origins="*")  # <-- UPDATE THIS
-
-# ... rest of your code stays the same
-
-# ... rest of your code
 
 # Try to import MetaTrader5
 try:
