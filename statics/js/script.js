@@ -1,30 +1,45 @@
-
-// static/js/script.js - Updated with dynamic API URL
-
-// ============================================================
-// API CONFIGURATION - FIXED FOR DEPLOYMENT
-// ============================================================
-
-// Get the base URL dynamically
-const API_BASE_URL = (() => {
-    // If we're in production (deployed), use the current origin
-    if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-        return '';  // Use relative URLs, will use the same domain
-    }
-    // Development mode - use localhost
-    return 'http://localhost:5000';
-})();
-
-// Update socket connection for production
-const SOCKET_URL = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' 
-    ? window.location.origin 
-    : 'http://localhost:5000';
-
-// Connect socket with the correct URL
-const socket = io(SOCKET_URL);
+// static/js/script.js - Complete with deployment fixes
 
 // ============================================================
-// API HELPER WITH DYNAMIC URL
+// API CONFIGURATION
+// ============================================================
+
+// Detect if we're in production or development
+const isProduction = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+
+// Set API base URL
+const API_BASE_URL = isProduction ? '' : 'http://localhost:5000';
+
+// Set Socket URL
+const SOCKET_URL = isProduction ? window.location.origin : 'http://localhost:5000';
+
+// ============================================================
+// SOCKET CONNECTION
+// ============================================================
+
+const socket = io(SOCKET_URL, {
+    reconnection: true,
+    reconnectionAttempts: 5,
+    reconnectionDelay: 1000
+});
+
+// Socket connection events
+socket.on('connect', function() {
+    console.log('✅ Socket connected to:', SOCKET_URL);
+    showToast('Connected to server', 'success');
+});
+
+socket.on('connect_error', function(error) {
+    console.error('Socket connection error:', error);
+    showToast('Connection error. Retrying...', 'error');
+});
+
+socket.on('disconnect', function() {
+    console.log('Socket disconnected');
+});
+
+// ============================================================
+// API HELPER
 // ============================================================
 
 async function apiRequest(endpoint, method = 'GET', data = null) {
@@ -49,17 +64,6 @@ async function apiRequest(endpoint, method = 'GET', data = null) {
         throw error;
     }
 }
-
-
-
-
-
-
-
-
-
-// static/js/script.js - Complete JavaScript
-const socket = io();
 
 // ============================================================
 // SOCKET EVENTS
@@ -280,20 +284,7 @@ function updateTradeLogs(logs) {
     `).join('');
 }
 
-function addLogMessage(message) {
-    // Logs are displayed in the trade log section
-}
-
-// ============================================================
-// API FUNCTIONS
-// ============================================================
-
-async function apiRequest(endpoint, method = 'GET', data = null) {
-    const options = { method, headers: { 'Content-Type': 'application/json' } };
-    if (data && (method === 'POST' || method === 'PUT')) options.body = JSON.stringify(data);
-    const response = await fetch(endpoint, options);
-    return response.json();
-}
+function addLogMessage(message) {}
 
 // ============================================================
 // TRADING FUNCTIONS
@@ -424,6 +415,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (status.trade_logs) updateTradeLogs(status.trade_logs);
     } catch (error) {
         console.error('Init error:', error);
+        showToast('Failed to connect to server. Retrying...', 'error');
     }
 
     // Auto-refresh every 10 seconds
