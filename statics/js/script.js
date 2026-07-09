@@ -1,3 +1,63 @@
+
+// static/js/script.js - Updated with dynamic API URL
+
+// ============================================================
+// API CONFIGURATION - FIXED FOR DEPLOYMENT
+// ============================================================
+
+// Get the base URL dynamically
+const API_BASE_URL = (() => {
+    // If we're in production (deployed), use the current origin
+    if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+        return '';  // Use relative URLs, will use the same domain
+    }
+    // Development mode - use localhost
+    return 'http://localhost:5000';
+})();
+
+// Update socket connection for production
+const SOCKET_URL = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' 
+    ? window.location.origin 
+    : 'http://localhost:5000';
+
+// Connect socket with the correct URL
+const socket = io(SOCKET_URL);
+
+// ============================================================
+// API HELPER WITH DYNAMIC URL
+// ============================================================
+
+async function apiRequest(endpoint, method = 'GET', data = null) {
+    const url = API_BASE_URL + endpoint;
+    const options = { 
+        method, 
+        headers: { 'Content-Type': 'application/json' } 
+    };
+    if (data && (method === 'POST' || method === 'PUT')) {
+        options.body = JSON.stringify(data);
+    }
+    
+    try {
+        const response = await fetch(url, options);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return await response.json();
+    } catch (error) {
+        console.error('API Request failed:', error);
+        showToast('Network error. Please check your connection.', 'error');
+        throw error;
+    }
+}
+
+
+
+
+
+
+
+
+
 // static/js/script.js - Complete JavaScript
 const socket = io();
 
