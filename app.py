@@ -1,4 +1,4 @@
-# app.py - Updated to handle missing MT5
+# app.py - Updated for Render Deployment
 from flask import Flask, render_template, request, jsonify, session
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
@@ -76,7 +76,15 @@ app.config['SESSION_TYPE'] = 'filesystem'
 
 # Enable CORS for all origins
 CORS(app, origins="*")
-socketio = SocketIO(app, cors_allowed_origins="*")
+
+# SocketIO with proper configuration for Render
+socketio = SocketIO(
+    app, 
+    cors_allowed_origins="*",
+    async_mode='eventlet',
+    logger=True,
+    engineio_logger=True
+)
 
 # ============================================================
 # DEMO DATA GENERATOR
@@ -144,7 +152,7 @@ def authenticate_user(username, password):
     return None
 
 # ============================================================
-# MARKET ANALYSIS CLASSES
+# MARKET ANALYSIS CLASSES (KEPT THE SAME)
 # ============================================================
 
 class MarketRegimeDetector:
@@ -1360,14 +1368,18 @@ def handle_connect():
         emit('signal_update', bot_state['signals'][0])
 
 # ============================================================
-# MAIN
+# MAIN - UPDATED FOR RENDER
 # ============================================================
 
 if __name__ == '__main__':
     print("=" * 70)
     print("🚀 ULTIMATE FOREX BOT - AI TRADING PLATFORM")
     print("=" * 70)
-    print(f"📊 Dashboard: http://localhost:5000")
+    
+    # Get port from environment variable (Render sets this)
+    port = int(os.environ.get('PORT', 5000))
+    
+    print(f"📊 Running on port: {port}")
     print("=" * 70)
     print("🔐 Login with your MT5 credentials")
     print("📈 BUY/SELL now work correctly")
@@ -1376,4 +1388,5 @@ if __name__ == '__main__':
     print("Press Ctrl+C to stop")
     print("=" * 70)
     
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True, allow_unsafe_werkzeug=True)
+    # Use eventlet for production
+    socketio.run(app, host='0.0.0.0', port=port, debug=False)
