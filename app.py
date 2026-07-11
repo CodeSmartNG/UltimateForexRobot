@@ -1,4 +1,3 @@
-# web_ui.py - Mobile Optimized Version
 from flask import Flask, render_template, request, jsonify, session
 from flask_socketio import SocketIO, emit
 import threading
@@ -90,7 +89,7 @@ def generate_demo_data(bars=200):
     return data
 
 # ============================================================
-# MARKET ANALYSIS CLASSES (KEPT THE SAME)
+# MARKET ANALYSIS CLASSES
 # ============================================================
 
 class MarketRegimeDetector:
@@ -518,15 +517,44 @@ def login():
             log_message(f'❌ Login failed: Invalid password for {username}')
             return jsonify({'success': False, 'error': 'Invalid password'})
 
-    if broker_type == 'mt5':
+    # MT4 Support - MT4 uses the same MT5 library with different terminal
+    if broker_type in ['mt5', 'mt4']:
         try:
             if BOT_AVAILABLE:
-                if mt5.initialize():
-                    if mt5.login(int(username) if username.isdigit() else username, password, server):
+                # For MT4, we use the same MT5 library but connect differently
+                # MT4 uses port 443 while MT5 uses 443 as well
+                terminal_path = None
+                if broker_type == 'mt4':
+                    # Try common MT4 paths
+                    possible_paths = [
+                        r'C:\Program Files\MetaTrader 4\terminal64.exe',
+                        r'C:\Program Files (x86)\MetaTrader 4\terminal.exe',
+                        r'C:\Program Files\MetaTrader 4\terminal.exe'
+                    ]
+                    for path in possible_paths:
+                        if os.path.exists(path):
+                            terminal_path = path
+                            break
+                    if terminal_path:
+                        log_message(f'🔧 Using MT4 terminal: {terminal_path}')
+                
+                if mt5.initialize(terminal_path):
+                    # MT4 login uses the same credentials format
+                    # For MT4, we use the login as integer
+                    try:
+                        login_int = int(username) if username.isdigit() else 0
+                        if login_int == 0:
+                            # If username is not numeric, try to use it as is
+                            login_int = username
+                    except:
+                        login_int = username
+                    
+                    if mt5.login(login_int, password, server):
                         account = mt5.account_info()
                         if account:
                             bot_state['broker_connected'] = True
-                            bot_state['broker_type'] = 'MT5'
+                            broker_display = 'MT4' if broker_type == 'mt4' else 'MT5'
+                            bot_state['broker_type'] = broker_display
                             bot_state['account'] = {
                                 'balance': account.balance,
                                 'equity': account.equity,
@@ -537,17 +565,17 @@ def login():
                             bot_state['current_user'] = username
 
                             log_message(
-                                f'✅ Connected to MT5 - Account: {account.login}, Balance: ${account.balance:.2f}')
+                                f'✅ Connected to {broker_display} - Account: {account.login}, Balance: ${account.balance:.2f}')
 
-                            socketio.emit('broker_status', {'connected': True, 'broker_type': 'MT5'})
+                            socketio.emit('broker_status', {'connected': True, 'broker_type': broker_display})
                             socketio.emit('account_info', bot_state['account'])
 
                             sync_positions()
 
                             return jsonify({
                                 'success': True,
-                                'message': f'Connected to MT5 - Account: {account.login}',
-                                'broker': 'MT5',
+                                'message': f'Connected to {broker_display} - Account: {account.login}',
+                                'broker': broker_display,
                                 'account': {
                                     'balance': account.balance,
                                     'equity': account.equity,
@@ -556,17 +584,17 @@ def login():
                                 }
                             })
                         else:
-                            log_message(f'❌ MT5 login failed: No account info')
-                            return jsonify({'success': False, 'error': 'MT5 login failed - No account info'})
+                            log_message(f'❌ {broker_type.upper()} login failed: No account info')
+                            return jsonify({'success': False, 'error': f'{broker_type.upper()} login failed - No account info'})
                     else:
-                        error_msg = f"MT5 login failed: {mt5.last_error()}"
+                        error_msg = f"{broker_type.upper()} login failed: {mt5.last_error()}"
                         log_message(f'❌ {error_msg}')
                         return jsonify({'success': False, 'error': error_msg})
                 else:
-                    log_message(f'❌ MT5 init failed: {mt5.last_error()}')
-                    return jsonify({'success': False, 'error': 'MT5 initialization failed'})
+                    log_message(f'❌ {broker_type.upper()} init failed: {mt5.last_error()}')
+                    return jsonify({'success': False, 'error': f'{broker_type.upper()} initialization failed. Make sure {broker_type.upper()} terminal is installed.'})
         except Exception as e:
-            log_message(f'❌ MT5 connection error: {str(e)}')
+            log_message(f'❌ {broker_type.upper()} connection error: {str(e)}')
             return jsonify({'success': False, 'error': str(e)})
 
     elif broker_type == 'paper':
@@ -763,7 +791,7 @@ def generate_recommendation(analysis):
     }
 
 # ============================================================
-# TRADING FUNCTIONS - FIXED BUY/SELL
+# TRADING FUNCTIONS
 # ============================================================
 
 @app.route('/api/trading/trade', methods=['POST'])
@@ -783,7 +811,7 @@ def place_trade():
 
     try:
         # Get current price based on trade type
-        if BOT_AVAILABLE and bot_state['broker_type'] == 'MT5':
+        if BOT_AVAILABLE and bot_state['broker_type'] in ['MT5', 'MT4']:
             tick = mt5.symbol_info_tick(symbol)
             if tick:
                 if trade_type == 'buy':
@@ -810,7 +838,7 @@ def place_trade():
             log_message(f'📈 Auto TP: {tp:.5f}')
 
         # Execute trade based on broker type
-        if bot_state['broker_type'] == 'MT5' and BOT_AVAILABLE:
+        if bot_state['broker_type'] in ['MT5', 'MT4'] and BOT_AVAILABLE:
             result = execute_mt5_trade(symbol, trade_type, volume, price, sl, tp)
         else:
             result = execute_demo_trade(symbol, trade_type, volume, price, sl, tp)
@@ -990,7 +1018,7 @@ def close_trade(trade_id):
         log_message(f'📊 Found position: Ticket={ticket}, Symbol={symbol}, Type={position_type}')
 
         # If MT5 connected, close via MT5
-        if bot_state['broker_type'] == 'MT5' and BOT_AVAILABLE:
+        if bot_state['broker_type'] in ['MT5', 'MT4'] and BOT_AVAILABLE:
             # Get position from MT5
             positions = mt5.positions_get(ticket=ticket)
             if positions and len(positions) > 0:
@@ -1227,7 +1255,7 @@ def place_trade_from_signal(symbol, signal):
     trade_type = signal.lower()
     volume = 0.01
 
-    if BOT_AVAILABLE and bot_state['broker_type'] == 'MT5':
+    if BOT_AVAILABLE and bot_state['broker_type'] in ['MT5', 'MT4']:
         try:
             tick = mt5.symbol_info_tick(symbol)
             if tick:
@@ -1250,7 +1278,7 @@ def place_trade_from_signal(symbol, signal):
         sl = price + sl_distance
         tp = price - tp_distance
 
-    if bot_state['broker_type'] == 'MT5' and BOT_AVAILABLE:
+    if bot_state['broker_type'] in ['MT5', 'MT4'] and BOT_AVAILABLE:
         return execute_mt5_trade(symbol, trade_type, volume, price, sl, tp)
     else:
         return execute_demo_trade(symbol, trade_type, volume, price, sl, tp)
@@ -1354,7 +1382,7 @@ def create_static_files():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Ultimate Forex Bot</title>
+    <title>Ultimate Forex Bot - MT5/MT4</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -1395,9 +1423,6 @@ def create_static_files():
             -webkit-font-smoothing: antialiased;
         }
 
-        /* ============================================================
-           SCROLLBAR
-           ============================================================ */
         ::-webkit-scrollbar {
             width: 3px;
         }
@@ -1409,9 +1434,6 @@ def create_static_files():
             border-radius: 10px;
         }
 
-        /* ============================================================
-           CONTAINER
-           ============================================================ */
         .container {
             max-width: 100%;
             padding: 0 12px;
@@ -1419,7 +1441,7 @@ def create_static_files():
         }
 
         /* ============================================================
-           NAVBAR - MOBILE OPTIMIZED
+           NAVBAR
            ============================================================ */
         .navbar {
             background: rgba(10, 10, 10, 0.95);
@@ -1493,7 +1515,7 @@ def create_static_files():
         }
 
         /* ============================================================
-           HERO - MOBILE OPTIMIZED
+           HERO
            ============================================================ */
         .hero {
             padding: 80px 0 30px;
@@ -1531,7 +1553,7 @@ def create_static_files():
         }
 
         /* ============================================================
-           BUTTONS - MOBILE OPTIMIZED
+           BUTTONS
            ============================================================ */
         .btn {
             padding: 10px 20px;
@@ -1573,7 +1595,7 @@ def create_static_files():
         }
 
         /* ============================================================
-           STATS - MOBILE OPTIMIZED
+           STATS
            ============================================================ */
         .stats-grid {
             display: grid;
@@ -1603,7 +1625,7 @@ def create_static_files():
         .stat-card .loss { color: var(--danger); }
 
         /* ============================================================
-           DASHBOARD - MOBILE OPTIMIZED
+           DASHBOARD
            ============================================================ */
         .dashboard-grid {
             display: grid;
@@ -1643,7 +1665,7 @@ def create_static_files():
         .panel-header .badge.connected { background: var(--success); }
 
         /* ============================================================
-           TRADE FORM - MOBILE OPTIMIZED
+           TRADE FORM
            ============================================================ */
         .trade-form {
             display: grid;
@@ -1673,7 +1695,7 @@ def create_static_files():
         }
 
         /* ============================================================
-           SIGNALS - MOBILE OPTIMIZED
+           SIGNALS
            ============================================================ */
         .signal-item {
             display: flex;
@@ -1697,7 +1719,7 @@ def create_static_files():
         .signal-confidence { color: var(--warning); font-weight: 600; }
 
         /* ============================================================
-           ROBOT CONTROLS - MOBILE OPTIMIZED
+           ROBOT CONTROLS
            ============================================================ */
         .robot-controls { display: flex; flex-direction: column; gap: 10px; }
 
@@ -1771,7 +1793,7 @@ def create_static_files():
         .log-message.warning { color: #ffaa00; }
 
         /* ============================================================
-           OPEN POSITIONS - MOBILE OPTIMIZED
+           OPEN POSITIONS
            ============================================================ */
         #openTrades > div {
             display: flex;
@@ -1785,7 +1807,7 @@ def create_static_files():
         #openTrades > div:last-child { border-bottom: none; }
 
         /* ============================================================
-           MODAL - MOBILE OPTIMIZED
+           MODAL
            ============================================================ */
         .modal {
             display: none;
@@ -1888,7 +1910,7 @@ def create_static_files():
         }
 
         /* ============================================================
-           TOAST - MOBILE OPTIMIZED
+           TOAST
            ============================================================ */
         .toast-container {
             position: fixed;
@@ -1920,7 +1942,7 @@ def create_static_files():
         }
 
         /* ============================================================
-           CONTACT FORM - MOBILE OPTIMIZED
+           CONTACT FORM
            ============================================================ */
         #contactForm input,
         #contactForm textarea {
@@ -1944,18 +1966,9 @@ def create_static_files():
         }
 
         /* ============================================================
-           CONTACT SECTION - MOBILE OPTIMIZED
-           ============================================================ */
-        #contact .panel {
-            max-width: 100%;
-            margin: 0;
-        }
-
-        /* ============================================================
            RESPONSIVE BREAKPOINTS
            ============================================================ */
 
-        /* Small phones (320px - 400px) */
         @media (max-width: 400px) {
             .hero h1 { font-size: 1.3rem; }
             .stat-card .number { font-size: 1.1rem; }
@@ -1966,7 +1979,6 @@ def create_static_files():
             .logo { font-size: 0.95rem; }
         }
 
-        /* Tablets and small laptops (768px - 1024px) */
         @media (min-width: 768px) {
             .stats-grid { grid-template-columns: repeat(4, 1fr); gap: 16px; }
             .dashboard-grid { grid-template-columns: 2fr 1fr; gap: 16px; }
@@ -1977,14 +1989,12 @@ def create_static_files():
             .btn { padding: 12px 28px; font-size: 1rem; }
         }
 
-        /* Large screens (1024px+) */
         @media (min-width: 1024px) {
             .container { max-width: 1200px; padding: 0 40px; }
             .hero h1 { font-size: 3.2rem; }
             .stat-card .number { font-size: 2.2rem; }
         }
 
-        /* Mobile menu toggle */
         @media (max-width: 768px) {
             .mobile-menu-btn { display: block; }
             .nav-links {
@@ -2012,6 +2022,20 @@ def create_static_files():
                 font-size: 0.85rem !important;
             }
         }
+
+        /* Broker type indicator */
+        .broker-indicator {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.6rem;
+            font-weight: 600;
+            margin-left: 4px;
+        }
+        .broker-mt5 { background: #2563eb; color: white; }
+        .broker-mt4 { background: #7c3aed; color: white; }
+        .broker-paper { background: #10b981; color: white; }
+        .broker-demo { background: #f59e0b; color: black; }
     </style>
 </head>
 <body>
@@ -2039,7 +2063,7 @@ def create_static_files():
 <section class="hero">
     <div class="container">
         <h1>Trade Smarter with <span>AI-Powered</span> Forex Bot</h1>
-        <p>Automate your trading strategy with our advanced AI robot.</p>
+        <p>Automate your trading strategy with our advanced AI robot. Supports MT5 &amp; MT4.</p>
         <div class="hero-buttons">
             <a href="#dashboard" class="btn btn-primary"><i class="fas fa-rocket"></i> Start Trading</a>
             <a href="#robot" class="btn btn-secondary"><i class="fas fa-robot"></i> Explore Bot</a>
@@ -2186,7 +2210,7 @@ def create_static_files():
     <div class="modal-content">
         <button class="modal-close" onclick="closeLoginModal()">&times;</button>
         <h2>🔐 Login to Broker</h2>
-        <p class="subtitle">Enter your MT5 account credentials</p>
+        <p class="subtitle">Enter your MT5 or MT4 account credentials</p>
         <form id="loginForm" onsubmit="handleLogin(event)">
             <input type="text" id="loginUsername" placeholder="Username / Login" required>
             <input type="password" id="loginPassword" placeholder="Password" required>
@@ -2195,6 +2219,7 @@ def create_static_files():
                 <label style="color:#94a3b8; font-size:0.8rem;">Broker Type</label>
                 <select id="loginBrokerType">
                     <option value="mt5">MetaTrader 5 (MT5)</option>
+                    <option value="mt4">MetaTrader 4 (MT4)</option>
                     <option value="paper">Paper Trading</option>
                     <option value="demo">Demo Mode</option>
                 </select>
@@ -2323,7 +2348,8 @@ async function logout() {
 function updateBrokerUI(connected, type) {
     const badge = document.getElementById('connectionBadge');
     if (connected) {
-        badge.textContent = type + ' Connected';
+        const brokerClass = type ? type.toLowerCase() : '';
+        badge.innerHTML = type + ' <span class="broker-indicator broker-' + brokerClass + '">' + type + '</span>';
         badge.className = 'badge connected';
         document.getElementById('navLoginBtn').innerHTML = '<i class="fas fa-user"></i> ' + (type || 'Connected');
     } else {
@@ -2580,7 +2606,7 @@ if __name__ == '__main__':
     print("=" * 70)
     print(f"📊 Dashboard: http://localhost:5000")
     print("=" * 70)
-    print("🔐 Login with your MT5 credentials")
+    print("🔐 Supports: MT5, MT4, Paper Trading, Demo Mode")
     print("📈 BUY/SELL now work correctly")
     print("❌ Close trade works properly")
     print("📱 Mobile-optimized responsive design")
