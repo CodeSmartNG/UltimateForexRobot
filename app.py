@@ -9,26 +9,31 @@ import math
 from datetime import datetime
 from collections import deque
 import hashlib
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Try to import MetaTrader5
 try:
     import MetaTrader5 as mt5
     BOT_AVAILABLE = True
+    logger.info("MetaTrader5 module loaded successfully")
 except ImportError:
     BOT_AVAILABLE = False
-    print("Warning: MT5 not available. Running in demo mode.")
+    logger.warning("MT5 not available. Running in demo mode.")
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'trading-bot-secret-key-2024'
 app.config['SESSION_TYPE'] = 'filesystem'
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # ============================================================
 # USER SESSION MANAGEMENT
 # ============================================================
 
 users = {}
-sessions = {}
 
 class User:
     def __init__(self, username, password, broker_type='mt5'):
@@ -36,9 +41,7 @@ class User:
         self.password = password
         self.broker_type = broker_type
         self.broker_connected = False
-        self.broker_account = None
         self.created_at = datetime.now()
-        self.trades = []
         self.performance = {
             'total_trades': 0,
             'winning_trades': 0,
@@ -416,7 +419,7 @@ bot_state = {
 # ============================================================
 
 def sync_positions():
-    if not bot_state['broker_connected'] or bot_state['broker_type'] != 'MT5':
+    if not bot_state['broker_connected'] or bot_state['broker_type'] not in ['MT5', 'MT4']:
         return
 
     if BOT_AVAILABLE:
@@ -443,12 +446,12 @@ def sync_positions():
                 socketio.emit('positions_updated', {'positions': bot_state['positions']})
 
                 total_profit = sum(p.get('profit', 0) for p in mt5_positions)
-                log_message(f'📊 Synced {len(mt5_positions)} positions from MT5')
+                log_message(f'📊 Synced {len(mt5_positions)} positions from {bot_state["broker_type"]}')
             else:
                 if bot_state['positions']:
                     bot_state['positions'] = []
                     socketio.emit('positions_updated', {'positions': []})
-                    log_message('📊 No open positions in MT5')
+                    log_message(f'📊 No open positions in {bot_state["broker_type"]}')
 
         except Exception as e:
             log_message(f'⚠️ Position sync error: {str(e)}')
@@ -483,7 +486,7 @@ def index():
 
 @app.route('/api/status')
 def get_status():
-    if bot_state['broker_connected'] and bot_state['broker_type'] == 'MT5':
+    if bot_state['broker_connected'] and bot_state['broker_type'] in ['MT5', 'MT4']:
         sync_positions()
 
     return jsonify({
@@ -506,8 +509,9 @@ def login():
     server = data.get('server', 'Headway-Demo')
     broker_type = data.get('broker_type', 'mt5')
 
-    log_message(f'🔐 Login attempt: {username} on {server}')
+    log_message(f'🔐 Login attempt: {username} on {server} ({broker_type})')
 
+    # Store user in session
     if username not in users:
         user = create_user(username, password, broker_type)
         log_message(f'📝 New user created: {username}')
@@ -517,82 +521,64 @@ def login():
             log_message(f'❌ Login failed: Invalid password for {username}')
             return jsonify({'success': False, 'error': 'Invalid password'})
 
-    # MT4 Support - MT4 uses the same MT5 library with different terminal
+    # Handle different broker types
     if broker_type in ['mt5', 'mt4']:
         try:
             if BOT_AVAILABLE:
-                # For MT4, we use the same MT5 library but connect differently
-                # MT4 uses port 443 while MT5 uses 443 as well
-                terminal_path = None
-                if broker_type == 'mt4':
-                    # Try common MT4 paths
-                    possible_paths = [
-                        r'C:\Program Files\MetaTrader 4\terminal64.exe',
-                        r'C:\Program Files (x86)\MetaTrader 4\terminal.exe',
-                        r'C:\Program Files\MetaTrader 4\terminal.exe'
-                    ]
-                    for path in possible_paths:
-                        if os.path.exists(path):
-                            terminal_path = path
-                            break
-                    if terminal_path:
-                        log_message(f'🔧 Using MT4 terminal: {terminal_path}')
-                
-                if mt5.initialize(terminal_path):
-                    # MT4 login uses the same credentials format
-                    # For MT4, we use the login as integer
-                    try:
-                        login_int = int(username) if username.isdigit() else 0
-                        if login_int == 0:
-                            # If username is not numeric, try to use it as is
-                            login_int = username
-                    except:
-                        login_int = username
-                    
-                    if mt5.login(login_int, password, server):
-                        account = mt5.account_info()
-                        if account:
-                            bot_state['broker_connected'] = True
-                            broker_display = 'MT4' if broker_type == 'mt4' else 'MT5'
-                            bot_state['broker_type'] = broker_display
-                            bot_state['account'] = {
+                # Initialize MT5
+                if not mt5.initialize():
+                    error_msg = f"Failed to initialize {broker_type.upper()}. Make sure {broker_type.upper()} is installed."
+                    log_message(f'❌ {error_msg}')
+                    return jsonify({'success': False, 'error': error_msg})
+
+                # Login
+                login_result = mt5.login(int(username), password, server)
+                if login_result:
+                    account = mt5.account_info()
+                    if account:
+                        broker_display = 'MT4' if broker_type == 'mt4' else 'MT5'
+                        bot_state['broker_connected'] = True
+                        bot_state['broker_type'] = broker_display
+                        bot_state['account'] = {
+                            'balance': account.balance,
+                            'equity': account.equity,
+                            'login': str(account.login),
+                            'server': account.server,
+                            'username': username
+                        }
+                        bot_state['current_user'] = username
+
+                        log_message(f'✅ Connected to {broker_display} - Account: {account.login}, Balance: ${account.balance:.2f}')
+
+                        socketio.emit('broker_status', {'connected': True, 'broker_type': broker_display})
+                        socketio.emit('account_info', bot_state['account'])
+
+                        sync_positions()
+
+                        return jsonify({
+                            'success': True,
+                            'message': f'Connected to {broker_display} - Account: {account.login}',
+                            'broker': broker_display,
+                            'account': {
                                 'balance': account.balance,
                                 'equity': account.equity,
                                 'login': str(account.login),
-                                'server': account.server,
-                                'username': username
+                                'server': account.server
                             }
-                            bot_state['current_user'] = username
-
-                            log_message(
-                                f'✅ Connected to {broker_display} - Account: {account.login}, Balance: ${account.balance:.2f}')
-
-                            socketio.emit('broker_status', {'connected': True, 'broker_type': broker_display})
-                            socketio.emit('account_info', bot_state['account'])
-
-                            sync_positions()
-
-                            return jsonify({
-                                'success': True,
-                                'message': f'Connected to {broker_display} - Account: {account.login}',
-                                'broker': broker_display,
-                                'account': {
-                                    'balance': account.balance,
-                                    'equity': account.equity,
-                                    'login': str(account.login),
-                                    'server': account.server
-                                }
-                            })
-                        else:
-                            log_message(f'❌ {broker_type.upper()} login failed: No account info')
-                            return jsonify({'success': False, 'error': f'{broker_type.upper()} login failed - No account info'})
+                        })
                     else:
-                        error_msg = f"{broker_type.upper()} login failed: {mt5.last_error()}"
+                        error_msg = f"{broker_type.upper()} login failed: No account info"
                         log_message(f'❌ {error_msg}')
                         return jsonify({'success': False, 'error': error_msg})
                 else:
-                    log_message(f'❌ {broker_type.upper()} init failed: {mt5.last_error()}')
-                    return jsonify({'success': False, 'error': f'{broker_type.upper()} initialization failed. Make sure {broker_type.upper()} terminal is installed.'})
+                    error_msg = f"Login failed: {mt5.last_error()}"
+                    log_message(f'❌ {error_msg}')
+                    return jsonify({'success': False, 'error': error_msg})
+            else:
+                error_msg = f"MetaTrader5 module not installed. Please install it: pip install MetaTrader5"
+                log_message(f'❌ {error_msg}')
+                return jsonify({'success': False, 'error': error_msg})
+
         except Exception as e:
             log_message(f'❌ {broker_type.upper()} connection error: {str(e)}')
             return jsonify({'success': False, 'error': str(e)})
@@ -613,7 +599,7 @@ def login():
         socketio.emit('account_info', bot_state['account'])
         return jsonify({'success': True, 'message': 'Connected to Paper Trading', 'broker': 'Paper'})
 
-    else:
+    else:  # demo mode
         bot_state['broker_connected'] = True
         bot_state['broker_type'] = 'Demo'
         bot_state['account'] = {
@@ -631,6 +617,12 @@ def login():
 
 @app.route('/api/logout', methods=['POST'])
 def logout():
+    if BOT_AVAILABLE and bot_state['broker_type'] in ['MT5', 'MT4']:
+        try:
+            mt5.shutdown()
+        except:
+            pass
+
     bot_state['broker_connected'] = False
     bot_state['broker_type'] = None
     bot_state['account'] = {}
@@ -647,7 +639,7 @@ def analyze_market():
     symbol = request.args.get('symbol', 'EURUSD')
 
     try:
-        if BOT_AVAILABLE:
+        if BOT_AVAILABLE and bot_state['broker_type'] in ['MT5', 'MT4']:
             try:
                 data = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, 0, 200)
                 if data and len(data) > 50:
@@ -944,12 +936,12 @@ def execute_mt5_trade(symbol, trade_type, volume, price, sl, tp):
 
             return {'success': True, 'ticket': ticket, 'position': position}
         else:
-            error_msg = f"MT5 order failed: {result.retcode if result else 'Unknown'}"
+            error_msg = f"Order failed: {result.retcode if result else 'Unknown'}"
             log_message(f'❌ {error_msg}')
             return {'success': False, 'error': error_msg}
 
     except Exception as e:
-        log_message(f'❌ MT5 trade error: {str(e)}')
+        log_message(f'❌ Trade error: {str(e)}')
         return {'success': False, 'error': str(e)}
 
 def execute_demo_trade(symbol, trade_type, volume, price, sl, tp):
@@ -1091,8 +1083,8 @@ def close_trade(trade_id):
                     log_message(f'❌ {error_msg}')
                     return jsonify({'success': False, 'error': error_msg})
             else:
-                log_message(f'❌ Position {ticket} not found in MT5')
-                return jsonify({'success': False, 'error': 'Position not found in MT5'})
+                log_message(f'❌ Position {ticket} not found')
+                return jsonify({'success': False, 'error': 'Position not found'})
 
         else:
             # Demo/Paper mode - simulate close
@@ -1219,7 +1211,6 @@ def contact():
 
 def execute_trade_from_signal(signal, analysis):
     confidence = analysis.get('recommendation', {}).get('confidence', 0)
-    reasons = analysis.get('recommendation', {}).get('reasons', [])
 
     log_message(f'📊 EXECUTING TRADE: {signal} with {confidence:.0f}% confidence')
 
@@ -1370,7 +1361,7 @@ def handle_connect():
         emit('signal_update', bot_state['signals'][0])
 
 # ============================================================
-# CREATE HTML TEMPLATE - MOBILE OPTIMIZED
+# CREATE HTML TEMPLATE
 # ============================================================
 
 def create_static_files():
@@ -1382,14 +1373,10 @@ def create_static_files():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Ultimate Forex Bot - MT5/MT4</title>
+    <title>Forex Bot - MT5/MT4</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        /* ============================================================
-           MOBILE-FIRST CSS - OPTIMIZED FOR PHONE
-           ============================================================ */
-        
         * {
             margin: 0;
             padding: 0;
@@ -1409,30 +1396,20 @@ def create_static_files():
             --text-muted: #888888;
             --border: #2a2a2a;
             --radius: 12px;
-            --shadow: 0 4px 20px rgba(0,0,0,0.3);
         }
 
         html, body {
-            height: 100%;
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
             background: var(--dark);
             color: var(--text);
             font-size: 14px;
             line-height: 1.5;
             overflow-x: hidden;
-            -webkit-font-smoothing: antialiased;
         }
 
-        ::-webkit-scrollbar {
-            width: 3px;
-        }
-        ::-webkit-scrollbar-track {
-            background: var(--dark);
-        }
-        ::-webkit-scrollbar-thumb {
-            background: var(--primary);
-            border-radius: 10px;
-        }
+        ::-webkit-scrollbar { width: 3px; }
+        ::-webkit-scrollbar-track { background: var(--dark); }
+        ::-webkit-scrollbar-thumb { background: var(--primary); border-radius: 10px; }
 
         .container {
             max-width: 100%;
@@ -1440,9 +1417,6 @@ def create_static_files():
             margin: 0 auto;
         }
 
-        /* ============================================================
-           NAVBAR
-           ============================================================ */
         .navbar {
             background: rgba(10, 10, 10, 0.95);
             padding: 10px 0;
@@ -1452,7 +1426,6 @@ def create_static_files():
             z-index: 1000;
             border-bottom: 1px solid var(--border);
             backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
         }
 
         .nav-container {
@@ -1487,11 +1460,7 @@ def create_static_files():
             border-radius: 6px;
             transition: 0.3s;
         }
-        .nav-links a:hover,
-        .nav-links a:active {
-            color: white;
-            background: rgba(37, 99, 235, 0.2);
-        }
+        .nav-links a:hover { color: white; background: rgba(37, 99, 235, 0.2); }
 
         .btn-login {
             background: var(--primary);
@@ -1499,9 +1468,6 @@ def create_static_files():
             padding: 4px 12px !important;
             border-radius: 20px !important;
             font-size: 0.7rem !important;
-        }
-        .btn-login:hover {
-            background: #1d4ed8 !important;
         }
 
         .mobile-menu-btn {
@@ -1514,9 +1480,6 @@ def create_static_files():
             padding: 4px 8px;
         }
 
-        /* ============================================================
-           HERO
-           ============================================================ */
         .hero {
             padding: 80px 0 30px;
             text-align: center;
@@ -1527,7 +1490,6 @@ def create_static_files():
             font-size: 1.6rem;
             font-weight: 700;
             margin-bottom: 8px;
-            line-height: 1.2;
         }
         .hero h1 span {
             background: linear-gradient(135deg, var(--primary), var(--secondary));
@@ -1541,20 +1503,6 @@ def create_static_files():
             margin: 0 auto 16px;
         }
 
-        .hero-buttons {
-            display: flex;
-            gap: 8px;
-            justify-content: center;
-            flex-wrap: wrap;
-        }
-        .hero-buttons .btn {
-            padding: 8px 16px;
-            font-size: 0.8rem;
-        }
-
-        /* ============================================================
-           BUTTONS
-           ============================================================ */
         .btn {
             padding: 10px 20px;
             border-radius: var(--radius);
@@ -1570,33 +1518,15 @@ def create_static_files():
             text-decoration: none;
             touch-action: manipulation;
             min-height: 44px;
-            min-width: 44px;
         }
         .btn:active { transform: scale(0.96); }
 
-        .btn-primary {
-            background: linear-gradient(135deg, var(--primary), var(--secondary));
-            color: white;
-        }
-        .btn-secondary {
-            background: transparent;
-            border: 1.5px solid var(--primary);
-            color: white;
-        }
+        .btn-primary { background: linear-gradient(135deg, var(--primary), var(--secondary)); color: white; }
+        .btn-secondary { background: transparent; border: 1.5px solid var(--primary); color: white; }
         .btn-success { background: var(--success); color: white; }
         .btn-danger { background: var(--danger); color: white; }
-        .btn-warning { background: var(--warning); color: black; }
+        .btn-sm { padding: 4px 12px; font-size: 0.7rem; min-height: 30px; }
 
-        .btn-sm {
-            padding: 4px 12px;
-            font-size: 0.7rem;
-            min-height: 30px;
-            min-width: 30px;
-        }
-
-        /* ============================================================
-           STATS
-           ============================================================ */
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
@@ -1611,22 +1541,11 @@ def create_static_files():
             padding: 12px;
             text-align: center;
         }
-        .stat-card .number {
-            font-size: 1.3rem;
-            font-weight: 700;
-            color: var(--primary);
-        }
-        .stat-card .label {
-            font-size: 0.65rem;
-            opacity: 0.6;
-            margin-top: 2px;
-        }
+        .stat-card .number { font-size: 1.3rem; font-weight: 700; color: var(--primary); }
+        .stat-card .label { font-size: 0.65rem; opacity: 0.6; margin-top: 2px; }
         .stat-card .profit { color: var(--success); }
         .stat-card .loss { color: var(--danger); }
 
-        /* ============================================================
-           DASHBOARD
-           ============================================================ */
         .dashboard-grid {
             display: grid;
             grid-template-columns: 1fr;
@@ -1649,12 +1568,7 @@ def create_static_files():
             gap: 8px;
             margin-bottom: 10px;
         }
-        .panel-header h3 {
-            font-size: 0.95rem;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
+        .panel-header h3 { font-size: 0.95rem; display: flex; align-items: center; gap: 6px; }
         .panel-header .badge {
             padding: 2px 10px;
             border-radius: 20px;
@@ -1664,15 +1578,8 @@ def create_static_files():
         }
         .panel-header .badge.connected { background: var(--success); }
 
-        /* ============================================================
-           TRADE FORM
-           ============================================================ */
-        .trade-form {
-            display: grid;
-            gap: 8px;
-        }
-        .trade-form select,
-        .trade-form input {
+        .trade-form { display: grid; gap: 8px; }
+        .trade-form select, .trade-form input {
             padding: 10px 12px;
             border-radius: 8px;
             border: 1px solid var(--border);
@@ -1684,19 +1591,9 @@ def create_static_files():
             appearance: none;
         }
         .trade-form select option { background: var(--dark); }
-        .trade-form .trade-buttons {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 8px;
-        }
-        .trade-form .trade-buttons .btn {
-            min-height: 48px;
-            font-size: 0.9rem;
-        }
+        .trade-form .trade-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .trade-form .trade-buttons .btn { min-height: 48px; font-size: 0.9rem; }
 
-        /* ============================================================
-           SIGNALS
-           ============================================================ */
         .signal-item {
             display: flex;
             justify-content: space-between;
@@ -1718,11 +1615,7 @@ def create_static_files():
         .signal-type.hold { background: rgba(245, 158, 11, 0.2); color: var(--warning); }
         .signal-confidence { color: var(--warning); font-weight: 600; }
 
-        /* ============================================================
-           ROBOT CONTROLS
-           ============================================================ */
         .robot-controls { display: flex; flex-direction: column; gap: 10px; }
-
         .robot-status {
             display: flex;
             align-items: center;
@@ -1743,36 +1636,12 @@ def create_static_files():
             animation: pulse 1.5s infinite;
         }
         .robot-status .status-dot.inactive { background: var(--danger); }
-        .robot-status #robotStatusText { font-size: 0.85rem; }
 
         @keyframes pulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.4; }
         }
 
-        .robot-config {
-            display: grid;
-            gap: 6px;
-        }
-        .robot-config label {
-            font-size: 0.75rem;
-            opacity: 0.6;
-        }
-        .robot-config select {
-            padding: 8px 12px;
-            border-radius: 6px;
-            border: 1px solid var(--border);
-            background: rgba(255,255,255,0.05);
-            color: white;
-            font-size: 0.85rem;
-            width: 100%;
-            -webkit-appearance: none;
-            appearance: none;
-        }
-
-        /* ============================================================
-           LOG CONTAINER
-           ============================================================ */
         .log-container {
             max-height: 200px;
             overflow-y: auto;
@@ -1782,33 +1651,7 @@ def create_static_files():
             font-family: 'Courier New', monospace;
             font-size: 0.7rem;
         }
-        .log-entry {
-            padding: 2px 0;
-            border-bottom: 1px solid rgba(255,255,255,0.03);
-        }
-        .log-time { color: #666; }
-        .log-message { color: #aaa; }
-        .log-message.success { color: #00ff88; }
-        .log-message.error { color: #ff4444; }
-        .log-message.warning { color: #ffaa00; }
 
-        /* ============================================================
-           OPEN POSITIONS
-           ============================================================ */
-        #openTrades > div {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 6px 0;
-            border-bottom: 1px solid var(--border);
-            flex-wrap: wrap;
-            gap: 4px;
-        }
-        #openTrades > div:last-child { border-bottom: none; }
-
-        /* ============================================================
-           MODAL
-           ============================================================ */
         .modal {
             display: none;
             position: fixed;
@@ -1845,25 +1688,10 @@ def create_static_files():
             color: #666;
             background: none;
             border: none;
-            transition: 0.3s;
-            padding: 4px 8px;
         }
         .modal-close:hover { color: white; }
 
-        .modal-content h2 {
-            text-align: center;
-            font-size: 1.3rem;
-            margin-bottom: 4px;
-        }
-        .modal-content .subtitle {
-            text-align: center;
-            color: #94a3b8;
-            margin-bottom: 16px;
-            font-size: 0.8rem;
-        }
-
-        .modal-content input,
-        .modal-content select {
+        .modal-content input, .modal-content select {
             width: 100%;
             padding: 10px 12px;
             margin-bottom: 10px;
@@ -1874,11 +1702,6 @@ def create_static_files():
             font-size: 0.85rem;
             -webkit-appearance: none;
             appearance: none;
-        }
-        .modal-content input:focus,
-        .modal-content select:focus {
-            outline: none;
-            border-color: var(--primary);
         }
 
         .modal-content .login-submit {
@@ -1891,27 +1714,12 @@ def create_static_files():
             font-size: 0.95rem;
             font-weight: 600;
             cursor: pointer;
-            transition: 0.3s;
             min-height: 48px;
         }
-        .modal-content .login-submit:active { transform: scale(0.98); }
 
-        .login-error {
-            color: var(--danger);
-            text-align: center;
-            margin-top: 6px;
-            font-size: 0.8rem;
-        }
-        .login-success {
-            color: var(--success);
-            text-align: center;
-            margin-top: 6px;
-            font-size: 0.8rem;
-        }
+        .login-error { color: var(--danger); text-align: center; margin-top: 6px; font-size: 0.8rem; }
+        .login-success { color: var(--success); text-align: center; margin-top: 6px; font-size: 0.8rem; }
 
-        /* ============================================================
-           TOAST
-           ============================================================ */
         .toast-container {
             position: fixed;
             bottom: 20px;
@@ -1941,11 +1749,7 @@ def create_static_files():
             to { opacity: 1; transform: translateY(0) translateX(-50%); }
         }
 
-        /* ============================================================
-           CONTACT FORM
-           ============================================================ */
-        #contactForm input,
-        #contactForm textarea {
+        #contactForm input, #contactForm textarea {
             width: 100%;
             padding: 10px 12px;
             margin-bottom: 10px;
@@ -1955,45 +1759,7 @@ def create_static_files():
             color: white;
             font-size: 0.85rem;
         }
-        #contactForm textarea {
-            min-height: 80px;
-            resize: vertical;
-        }
-        #contactForm input:focus,
-        #contactForm textarea:focus {
-            outline: none;
-            border-color: var(--primary);
-        }
-
-        /* ============================================================
-           RESPONSIVE BREAKPOINTS
-           ============================================================ */
-
-        @media (max-width: 400px) {
-            .hero h1 { font-size: 1.3rem; }
-            .stat-card .number { font-size: 1.1rem; }
-            .nav-links a { font-size: 0.6rem; padding: 3px 6px; }
-            .btn { font-size: 0.75rem; padding: 8px 14px; min-height: 38px; }
-            .trade-form .trade-buttons .btn { min-height: 42px; font-size: 0.8rem; }
-            .modal-content { padding: 16px; }
-            .logo { font-size: 0.95rem; }
-        }
-
-        @media (min-width: 768px) {
-            .stats-grid { grid-template-columns: repeat(4, 1fr); gap: 16px; }
-            .dashboard-grid { grid-template-columns: 2fr 1fr; gap: 16px; }
-            .container { padding: 0 24px; }
-            .hero h1 { font-size: 2.5rem; }
-            .hero { padding: 100px 0 50px; }
-            .hero p { font-size: 1.1rem; }
-            .btn { padding: 12px 28px; font-size: 1rem; }
-        }
-
-        @media (min-width: 1024px) {
-            .container { max-width: 1200px; padding: 0 40px; }
-            .hero h1 { font-size: 3.2rem; }
-            .stat-card .number { font-size: 2.2rem; }
-        }
+        #contactForm textarea { min-height: 80px; resize: vertical; }
 
         @media (max-width: 768px) {
             .mobile-menu-btn { display: block; }
@@ -2009,21 +1775,19 @@ def create_static_files():
                 gap: 6px;
                 border-bottom: 1px solid var(--border);
             }
-            .nav-links.active {
-                display: flex;
-            }
-            .nav-links a {
-                padding: 8px 12px;
-                font-size: 0.85rem;
-                width: 100%;
-            }
-            .btn-login {
-                padding: 8px 16px !important;
-                font-size: 0.85rem !important;
-            }
+            .nav-links.active { display: flex; }
+            .nav-links a { padding: 8px 12px; font-size: 0.85rem; width: 100%; }
+            .btn-login { padding: 8px 16px !important; font-size: 0.85rem !important; }
         }
 
-        /* Broker type indicator */
+        @media (min-width: 768px) {
+            .stats-grid { grid-template-columns: repeat(4, 1fr); gap: 16px; }
+            .dashboard-grid { grid-template-columns: 2fr 1fr; gap: 16px; }
+            .container { padding: 0 24px; }
+            .hero h1 { font-size: 2.5rem; }
+            .hero { padding: 100px 0 50px; }
+        }
+
         .broker-indicator {
             display: inline-block;
             padding: 2px 8px;
@@ -2040,9 +1804,6 @@ def create_static_files():
 </head>
 <body>
 
-<!-- ============================================================
-   NAVBAR
-   ============================================================ -->
 <nav class="navbar">
     <div class="nav-container">
         <a href="#" class="logo">Ultimate <span>FX</span></a>
@@ -2057,9 +1818,6 @@ def create_static_files():
     </div>
 </nav>
 
-<!-- ============================================================
-   HERO
-   ============================================================ -->
 <section class="hero">
     <div class="container">
         <h1>Trade Smarter with <span>AI-Powered</span> Forex Bot</h1>
@@ -2071,9 +1829,6 @@ def create_static_files():
     </div>
 </section>
 
-<!-- ============================================================
-   DASHBOARD STATS
-   ============================================================ -->
 <section class="container" id="dashboard">
     <div class="stats-grid">
         <div class="stat-card"><div class="number" id="balance">--</div><div class="label">Balance</div></div>
@@ -2083,12 +1838,8 @@ def create_static_files():
     </div>
 </section>
 
-<!-- ============================================================
-   TRADING DASHBOARD
-   ============================================================ -->
 <section class="container" id="trading">
     <div class="dashboard-grid">
-        <!-- Trading Panel -->
         <div class="panel">
             <div class="panel-header">
                 <h3><i class="fas fa-chart-line"></i> Trade Now</h3>
@@ -2115,8 +1866,8 @@ def create_static_files():
                 <input type="number" id="tradeStopLoss" placeholder="Stop Loss (optional)" step="0.0001">
                 <input type="number" id="tradeTakeProfit" placeholder="Take Profit (optional)" step="0.0001">
                 <div class="trade-buttons">
-                    <button type="button" class="btn btn-success" id="tradeBuyBtn" onclick="placeTrade('buy')"><i class="fas fa-arrow-up"></i> BUY</button>
-                    <button type="button" class="btn btn-danger" id="tradeSellBtn" onclick="placeTrade('sell')"><i class="fas fa-arrow-down"></i> SELL</button>
+                    <button type="button" class="btn btn-success" onclick="placeTrade('buy')"><i class="fas fa-arrow-up"></i> BUY</button>
+                    <button type="button" class="btn btn-danger" onclick="placeTrade('sell')"><i class="fas fa-arrow-down"></i> SELL</button>
                 </div>
             </form>
 
@@ -2126,7 +1877,6 @@ def create_static_files():
             </div>
         </div>
 
-        <!-- Signals Panel -->
         <div class="panel">
             <div class="panel-header">
                 <h3><i class="fas fa-bullhorn"></i> Live Signals</h3>
@@ -2142,9 +1892,6 @@ def create_static_files():
     </div>
 </section>
 
-<!-- ============================================================
-   ROBOT SECTION
-   ============================================================ -->
 <section class="container" id="robot">
     <div class="dashboard-grid">
         <div class="panel">
@@ -2188,9 +1935,6 @@ def create_static_files():
     </div>
 </section>
 
-<!-- ============================================================
-   CONTACT SECTION
-   ============================================================ -->
 <section class="container" id="contact" style="padding:30px 0;">
     <div class="panel" style="max-width:100%; margin:0;">
         <h3 style="text-align:center; margin-bottom:12px; font-size:1.1rem;">Contact Support</h3>
@@ -2203,9 +1947,6 @@ def create_static_files():
     </div>
 </section>
 
-<!-- ============================================================
-   LOGIN MODAL
-   ============================================================ -->
 <div class="modal" id="loginModal">
     <div class="modal-content">
         <button class="modal-close" onclick="closeLoginModal()">&times;</button>
@@ -2231,24 +1972,12 @@ def create_static_files():
     </div>
 </div>
 
-<!-- ============================================================
-   TOAST CONTAINER
-   ============================================================ -->
 <div class="toast-container" id="toastContainer"></div>
 
-<!-- ============================================================
-   SCRIPTS
-   ============================================================ -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.js"></script>
 <script>
-// ============================================================
-// SOCKET.IO CONNECTION
-// ============================================================
 const socket = io();
 
-// ============================================================
-// SOCKET EVENTS
-// ============================================================
 socket.on('account_info', function(data) {
     if (data.balance) {
         document.getElementById('balance').textContent = '$' + data.balance.toFixed(2);
@@ -2261,11 +1990,7 @@ socket.on('performance_update', function(data) { updatePerformance(data); });
 socket.on('bot_status', function(data) { updateRobotUI(data.running); });
 socket.on('broker_status', function(data) { updateBrokerUI(data.connected, data.broker_type); });
 socket.on('trade_log', function(data) { updateTradeLogs(data.logs); });
-socket.on('log_message', function(data) { addLogMessage(data.message); });
 
-// ============================================================
-// TOAST NOTIFICATIONS
-// ============================================================
 function showToast(message, type = 'info') {
     const container = document.getElementById('toastContainer');
     const toast = document.createElement('div');
@@ -2275,9 +2000,6 @@ function showToast(message, type = 'info') {
     setTimeout(() => toast.remove(), 5000);
 }
 
-// ============================================================
-// LOGIN FUNCTIONS
-// ============================================================
 function openLoginModal() {
     document.getElementById('loginModal').classList.add('active');
     document.getElementById('loginError').textContent = '';
@@ -2318,8 +2040,8 @@ async function handleLogin(event) {
             showToast('❌ Login failed: ' + result.error, 'error');
         }
     } catch (error) {
-        document.getElementById('loginError').textContent = '❌ Connection error';
-        showToast('❌ Login error', 'error');
+        document.getElementById('loginError').textContent = '❌ Connection error: ' + error.message;
+        showToast('❌ Login error: ' + error.message, 'error');
     }
 }
 
@@ -2342,14 +2064,11 @@ async function logout() {
     }
 }
 
-// ============================================================
-// UI UPDATE FUNCTIONS
-// ============================================================
 function updateBrokerUI(connected, type) {
     const badge = document.getElementById('connectionBadge');
     if (connected) {
         const brokerClass = type ? type.toLowerCase() : '';
-        badge.innerHTML = type + ' <span class="broker-indicator broker-' + brokerClass + '">' + type + '</span>';
+        badge.innerHTML = 'Connected <span class="broker-indicator broker-' + brokerClass + '">' + type + '</span>';
         badge.className = 'badge connected';
         document.getElementById('navLoginBtn').innerHTML = '<i class="fas fa-user"></i> ' + (type || 'Connected');
     } else {
@@ -2430,39 +2149,31 @@ function updateTradeLogs(logs) {
         return;
     }
     container.innerHTML = logs.slice(-10).reverse().map(log => `
-        <div class="log-entry">
-            <span class="log-time">[${new Date(log.time).toLocaleTimeString()}]</span>
-            <span class="log-message ${log.status === 'OPEN' ? 'success' : 'warning'}">
+        <div class="log-entry" style="padding:2px 0; border-bottom:1px solid rgba(255,255,255,0.03);">
+            <span style="color:#666;">[${new Date(log.time).toLocaleTimeString()}]</span>
+            <span style="color:#aaa;">
                 ${log.type} ${log.symbol} ${log.volume} @ ${log.entry.toFixed(5)}
                 ${log.status === 'CLOSED' ? ` Profit: $${(log.profit || 0).toFixed(2)}` : ''}
-                ${log.reasons ? ' | ' + log.reasons.join(' • ') : ''}
             </span>
         </div>
     `).join('');
 }
 
-function addLogMessage(message) {}
-
-// ============================================================
-// API FUNCTIONS
-// ============================================================
 async function apiRequest(endpoint, method = 'GET', data = null) {
     const options = { method, headers: { 'Content-Type': 'application/json' } };
     if (data && (method === 'POST' || method === 'PUT')) options.body = JSON.stringify(data);
     const response = await fetch(endpoint, options);
+    if (!response.ok) {
+        throw new Error('HTTP ' + response.status + ': ' + response.statusText);
+    }
     return response.json();
 }
 
-// ============================================================
-// TRADING FUNCTIONS
-// ============================================================
 function placeTrade(tradeType) {
     const symbol = document.getElementById('tradeSymbol').value;
     const volume = parseFloat(document.getElementById('tradeVolume').value) || 0.01;
     const stopLoss = parseFloat(document.getElementById('tradeStopLoss').value) || 0;
     const takeProfit = parseFloat(document.getElementById('tradeTakeProfit').value) || 0;
-
-    console.log('Placing trade:', { symbol, tradeType, volume, stopLoss, takeProfit });
 
     apiRequest('/api/trading/trade', 'POST', {
         symbol: symbol,
@@ -2473,12 +2184,11 @@ function placeTrade(tradeType) {
     }).then(result => {
         if (result.success) {
             showToast('✅ ' + tradeType.toUpperCase() + ' trade placed!', 'success');
-            document.getElementById('tradeForm').reset();
         } else {
             showToast('❌ Failed: ' + (result.error || 'Unknown'), 'error');
         }
     }).catch(error => {
-        showToast('❌ Failed to place trade', 'error');
+        showToast('❌ Failed to place trade: ' + error.message, 'error');
     });
 }
 
@@ -2492,7 +2202,7 @@ async function closeTrade(tradeId) {
             showToast('❌ Failed to close trade: ' + (result.error || 'Unknown'), 'error');
         }
     } catch (error) {
-        showToast('❌ Failed to close trade', 'error');
+        showToast('❌ Failed to close trade: ' + error.message, 'error');
     }
 }
 
@@ -2505,13 +2215,10 @@ async function generateSignal() {
             showToast('❌ Failed to generate signal', 'error');
         }
     } catch (error) {
-        showToast('❌ Failed to generate signal', 'error');
+        showToast('❌ Failed to generate signal: ' + error.message, 'error');
     }
 }
 
-// ============================================================
-// ROBOT FUNCTIONS
-// ============================================================
 document.getElementById('robotToggleBtn').addEventListener('click', async function() {
     const isActive = this.textContent.includes('Start');
     try {
@@ -2523,13 +2230,10 @@ document.getElementById('robotToggleBtn').addEventListener('click', async functi
             showToast('❌ Failed: ' + (result.error || 'Unknown'), 'error');
         }
     } catch (error) {
-        showToast('❌ Failed to toggle robot', 'error');
+        showToast('❌ Failed to toggle robot: ' + error.message, 'error');
     }
 });
 
-// ============================================================
-// CONTACT FORM
-// ============================================================
 document.getElementById('contactForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const data = {
@@ -2546,20 +2250,14 @@ document.getElementById('contactForm').addEventListener('submit', async (e) => {
             showToast('❌ Failed to send', 'error');
         }
     } catch (error) {
-        showToast('❌ Failed to send', 'error');
+        showToast('❌ Failed to send: ' + error.message, 'error');
     }
 });
 
-// ============================================================
-// MOBILE MENU
-// ============================================================
 document.getElementById('mobileMenuBtn').addEventListener('click', function() {
     document.getElementById('navLinks').classList.toggle('active');
 });
 
-// ============================================================
-// INITIALIZATION
-// ============================================================
 document.addEventListener('DOMContentLoaded', async () => {
     try {
         const status = await apiRequest('/api/status');
@@ -2588,11 +2286,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     }, 10000);
 });
 
-console.log('Ultimate Forex Bot UI loaded!');
+console.log('Forex Bot UI loaded!');
 </script>
 </body>
 </html>''')
-
 
 # ============================================================
 # MAIN
@@ -2610,6 +2307,9 @@ if __name__ == '__main__':
     print("📈 BUY/SELL now work correctly")
     print("❌ Close trade works properly")
     print("📱 Mobile-optimized responsive design")
+    print("=" * 70)
+    print("⚠️  Make sure MetaTrader5 is installed: pip install MetaTrader5")
+    print("⚠️  Make sure MT5/MT4 terminal is installed on your computer")
     print("=" * 70)
     print("Press Ctrl+C to stop")
     print("=" * 70)
