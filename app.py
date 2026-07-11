@@ -10,19 +10,27 @@ from datetime import datetime
 from collections import deque
 import hashlib
 import logging
+import sys
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Try to import MetaTrader5
-try:
-    import MetaTrader5 as mt5
-    BOT_AVAILABLE = True
-    logger.info("MetaTrader5 module loaded successfully")
-except ImportError:
-    BOT_AVAILABLE = False
-    logger.warning("MT5 not available. Running in demo mode.")
+# Check if running on Windows (where MT5 is available)
+IS_WINDOWS = sys.platform.startswith('win')
+BOT_AVAILABLE = False
+
+# Try to import MetaTrader5 only on Windows
+if IS_WINDOWS:
+    try:
+        import MetaTrader5 as mt5
+        BOT_AVAILABLE = True
+        logger.info("MetaTrader5 module loaded successfully (Windows)")
+    except ImportError:
+        BOT_AVAILABLE = False
+        logger.warning("MT5 not available on this system")
+else:
+    logger.info("Running on non-Windows system - MT5 not available")
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'trading-bot-secret-key-2024'
@@ -36,7 +44,7 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 users = {}
 
 class User:
-    def __init__(self, username, password, broker_type='mt5'):
+    def __init__(self, username, password, broker_type='demo'):
         self.username = username
         self.password = password
         self.broker_type = broker_type
@@ -53,7 +61,7 @@ class User:
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
-def create_user(username, password, broker_type='mt5'):
+def create_user(username, password, broker_type='demo'):
     if username in users:
         return None
     users[username] = User(username, hash_password(password), broker_type)
@@ -422,7 +430,7 @@ def sync_positions():
     if not bot_state['broker_connected'] or bot_state['broker_type'] not in ['MT5', 'MT4']:
         return
 
-    if BOT_AVAILABLE:
+    if BOT_AVAILABLE and IS_WINDOWS:
         try:
             positions = mt5.positions_get()
 
@@ -507,7 +515,7 @@ def login():
     username = data.get('username', '')
     password = data.get('password', '')
     server = data.get('server', 'Headway-Demo')
-    broker_type = data.get('broker_type', 'mt5')
+    broker_type = data.get('broker_type', 'demo')
 
     log_message(f'🔐 Login attempt: {username} on {server} ({broker_type})')
 
@@ -521,61 +529,66 @@ def login():
             log_message(f'❌ Login failed: Invalid password for {username}')
             return jsonify({'success': False, 'error': 'Invalid password'})
 
-    # Handle different broker types
+    # Handle MT5/MT4 - only available on Windows
     if broker_type in ['mt5', 'mt4']:
+        if not IS_WINDOWS:
+            error_msg = f"{broker_type.upper()} is only available on Windows. Please use Demo or Paper Trading mode in this environment."
+            log_message(f'❌ {error_msg}')
+            return jsonify({'success': False, 'error': error_msg})
+            
+        if not BOT_AVAILABLE:
+            error_msg = f"MetaTrader5 module not installed. Please install it on Windows: pip install MetaTrader5"
+            log_message(f'❌ {error_msg}')
+            return jsonify({'success': False, 'error': error_msg})
+            
         try:
-            if BOT_AVAILABLE:
-                # Initialize MT5
-                if not mt5.initialize():
-                    error_msg = f"Failed to initialize {broker_type.upper()}. Make sure {broker_type.upper()} is installed."
-                    log_message(f'❌ {error_msg}')
-                    return jsonify({'success': False, 'error': error_msg})
+            # Initialize MT5
+            if not mt5.initialize():
+                error_msg = f"Failed to initialize {broker_type.upper()}. Make sure {broker_type.upper()} terminal is installed."
+                log_message(f'❌ {error_msg}')
+                return jsonify({'success': False, 'error': error_msg})
 
-                # Login
-                login_result = mt5.login(int(username), password, server)
-                if login_result:
-                    account = mt5.account_info()
-                    if account:
-                        broker_display = 'MT4' if broker_type == 'mt4' else 'MT5'
-                        bot_state['broker_connected'] = True
-                        bot_state['broker_type'] = broker_display
-                        bot_state['account'] = {
+            # Login
+            login_result = mt5.login(int(username), password, server)
+            if login_result:
+                account = mt5.account_info()
+                if account:
+                    broker_display = 'MT4' if broker_type == 'mt4' else 'MT5'
+                    bot_state['broker_connected'] = True
+                    bot_state['broker_type'] = broker_display
+                    bot_state['account'] = {
+                        'balance': account.balance,
+                        'equity': account.equity,
+                        'login': str(account.login),
+                        'server': account.server,
+                        'username': username
+                    }
+                    bot_state['current_user'] = username
+
+                    log_message(f'✅ Connected to {broker_display} - Account: {account.login}, Balance: ${account.balance:.2f}')
+
+                    socketio.emit('broker_status', {'connected': True, 'broker_type': broker_display})
+                    socketio.emit('account_info', bot_state['account'])
+
+                    sync_positions()
+
+                    return jsonify({
+                        'success': True,
+                        'message': f'Connected to {broker_display} - Account: {account.login}',
+                        'broker': broker_display,
+                        'account': {
                             'balance': account.balance,
                             'equity': account.equity,
                             'login': str(account.login),
-                            'server': account.server,
-                            'username': username
+                            'server': account.server
                         }
-                        bot_state['current_user'] = username
-
-                        log_message(f'✅ Connected to {broker_display} - Account: {account.login}, Balance: ${account.balance:.2f}')
-
-                        socketio.emit('broker_status', {'connected': True, 'broker_type': broker_display})
-                        socketio.emit('account_info', bot_state['account'])
-
-                        sync_positions()
-
-                        return jsonify({
-                            'success': True,
-                            'message': f'Connected to {broker_display} - Account: {account.login}',
-                            'broker': broker_display,
-                            'account': {
-                                'balance': account.balance,
-                                'equity': account.equity,
-                                'login': str(account.login),
-                                'server': account.server
-                            }
-                        })
-                    else:
-                        error_msg = f"{broker_type.upper()} login failed: No account info"
-                        log_message(f'❌ {error_msg}')
-                        return jsonify({'success': False, 'error': error_msg})
+                    })
                 else:
-                    error_msg = f"Login failed: {mt5.last_error()}"
+                    error_msg = f"{broker_type.upper()} login failed: No account info"
                     log_message(f'❌ {error_msg}')
                     return jsonify({'success': False, 'error': error_msg})
             else:
-                error_msg = f"MetaTrader5 module not installed. Please install it: pip install MetaTrader5"
+                error_msg = f"Login failed: {mt5.last_error()}"
                 log_message(f'❌ {error_msg}')
                 return jsonify({'success': False, 'error': error_msg})
 
@@ -617,7 +630,7 @@ def login():
 
 @app.route('/api/logout', methods=['POST'])
 def logout():
-    if BOT_AVAILABLE and bot_state['broker_type'] in ['MT5', 'MT4']:
+    if BOT_AVAILABLE and IS_WINDOWS and bot_state['broker_type'] in ['MT5', 'MT4']:
         try:
             mt5.shutdown()
         except:
@@ -639,7 +652,7 @@ def analyze_market():
     symbol = request.args.get('symbol', 'EURUSD')
 
     try:
-        if BOT_AVAILABLE and bot_state['broker_type'] in ['MT5', 'MT4']:
+        if BOT_AVAILABLE and IS_WINDOWS and bot_state['broker_type'] in ['MT5', 'MT4']:
             try:
                 data = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, 0, 200)
                 if data and len(data) > 50:
@@ -803,7 +816,7 @@ def place_trade():
 
     try:
         # Get current price based on trade type
-        if BOT_AVAILABLE and bot_state['broker_type'] in ['MT5', 'MT4']:
+        if BOT_AVAILABLE and IS_WINDOWS and bot_state['broker_type'] in ['MT5', 'MT4']:
             tick = mt5.symbol_info_tick(symbol)
             if tick:
                 if trade_type == 'buy':
@@ -830,7 +843,7 @@ def place_trade():
             log_message(f'📈 Auto TP: {tp:.5f}')
 
         # Execute trade based on broker type
-        if bot_state['broker_type'] in ['MT5', 'MT4'] and BOT_AVAILABLE:
+        if bot_state['broker_type'] in ['MT5', 'MT4'] and BOT_AVAILABLE and IS_WINDOWS:
             result = execute_mt5_trade(symbol, trade_type, volume, price, sl, tp)
         else:
             result = execute_demo_trade(symbol, trade_type, volume, price, sl, tp)
@@ -1010,7 +1023,7 @@ def close_trade(trade_id):
         log_message(f'📊 Found position: Ticket={ticket}, Symbol={symbol}, Type={position_type}')
 
         # If MT5 connected, close via MT5
-        if bot_state['broker_type'] in ['MT5', 'MT4'] and BOT_AVAILABLE:
+        if bot_state['broker_type'] in ['MT5', 'MT4'] and BOT_AVAILABLE and IS_WINDOWS:
             # Get position from MT5
             positions = mt5.positions_get(ticket=ticket)
             if positions and len(positions) > 0:
@@ -1246,7 +1259,7 @@ def place_trade_from_signal(symbol, signal):
     trade_type = signal.lower()
     volume = 0.01
 
-    if BOT_AVAILABLE and bot_state['broker_type'] in ['MT5', 'MT4']:
+    if BOT_AVAILABLE and IS_WINDOWS and bot_state['broker_type'] in ['MT5', 'MT4']:
         try:
             tick = mt5.symbol_info_tick(symbol)
             if tick:
@@ -1269,7 +1282,7 @@ def place_trade_from_signal(symbol, signal):
         sl = price + sl_distance
         tp = price - tp_distance
 
-    if bot_state['broker_type'] in ['MT5', 'MT4'] and BOT_AVAILABLE:
+    if bot_state['broker_type'] in ['MT5', 'MT4'] and BOT_AVAILABLE and IS_WINDOWS:
         return execute_mt5_trade(symbol, trade_type, volume, price, sl, tp)
     else:
         return execute_demo_trade(symbol, trade_type, volume, price, sl, tp)
@@ -1361,12 +1374,13 @@ def handle_connect():
         emit('signal_update', bot_state['signals'][0])
 
 # ============================================================
-# CREATE HTML TEMPLATE
+# CREATE HTML TEMPLATE (same as before - kept minimal for space)
 # ============================================================
 
 def create_static_files():
     os.makedirs('templates', exist_ok=True)
-
+    
+    # HTML template - same as previous but with updated title
     with open('templates/index.html', 'w', encoding='utf-8') as f:
         f.write('''<!DOCTYPE html>
 <html lang="en">
@@ -1377,429 +1391,89 @@ def create_static_files():
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            -webkit-tap-highlight-color: transparent;
-        }
-
-        :root {
-            --primary: #2563eb;
-            --secondary: #7c3aed;
-            --success: #10b981;
-            --danger: #ef4444;
-            --warning: #f59e0b;
-            --dark: #0a0a0a;
-            --card-bg: #141414;
-            --text: #e2e8f0;
-            --text-muted: #888888;
-            --border: #2a2a2a;
-            --radius: 12px;
-        }
-
-        html, body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: var(--dark);
-            color: var(--text);
-            font-size: 14px;
-            line-height: 1.5;
-            overflow-x: hidden;
-        }
-
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        :root { --primary: #2563eb; --secondary: #7c3aed; --success: #10b981; --danger: #ef4444; --warning: #f59e0b; --dark: #0a0a0a; --card-bg: #141414; --text: #e2e8f0; --text-muted: #888888; --border: #2a2a2a; --radius: 12px; }
+        html, body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--dark); color: var(--text); font-size: 14px; line-height: 1.5; overflow-x: hidden; }
         ::-webkit-scrollbar { width: 3px; }
         ::-webkit-scrollbar-track { background: var(--dark); }
         ::-webkit-scrollbar-thumb { background: var(--primary); border-radius: 10px; }
-
-        .container {
-            max-width: 100%;
-            padding: 0 12px;
-            margin: 0 auto;
-        }
-
-        .navbar {
-            background: rgba(10, 10, 10, 0.95);
-            padding: 10px 0;
-            position: fixed;
-            top: 0;
-            width: 100%;
-            z-index: 1000;
-            border-bottom: 1px solid var(--border);
-            backdrop-filter: blur(10px);
-        }
-
-        .nav-container {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 0 12px;
-        }
-
-        .logo {
-            font-size: 1.1rem;
-            font-weight: 700;
-            color: var(--primary);
-            text-decoration: none;
-        }
+        .container { max-width: 100%; padding: 0 12px; margin: 0 auto; }
+        .navbar { background: rgba(10, 10, 10, 0.95); padding: 10px 0; position: fixed; top: 0; width: 100%; z-index: 1000; border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); }
+        .nav-container { display: flex; justify-content: space-between; align-items: center; padding: 0 12px; }
+        .logo { font-size: 1.1rem; font-weight: 700; color: var(--primary); text-decoration: none; }
         .logo span { color: var(--warning); }
-
-        .nav-links {
-            display: flex;
-            list-style: none;
-            gap: 4px;
-            align-items: center;
-            flex-wrap: wrap;
-        }
-
-        .nav-links a {
-            color: var(--text-muted);
-            text-decoration: none;
-            font-weight: 500;
-            font-size: 0.7rem;
-            padding: 4px 8px;
-            border-radius: 6px;
-            transition: 0.3s;
-        }
+        .nav-links { display: flex; list-style: none; gap: 4px; align-items: center; flex-wrap: wrap; }
+        .nav-links a { color: var(--text-muted); text-decoration: none; font-weight: 500; font-size: 0.7rem; padding: 4px 8px; border-radius: 6px; transition: 0.3s; }
         .nav-links a:hover { color: white; background: rgba(37, 99, 235, 0.2); }
-
-        .btn-login {
-            background: var(--primary);
-            color: white !important;
-            padding: 4px 12px !important;
-            border-radius: 20px !important;
-            font-size: 0.7rem !important;
-        }
-
-        .mobile-menu-btn {
-            display: none;
-            background: none;
-            border: none;
-            color: white;
-            font-size: 1.2rem;
-            cursor: pointer;
-            padding: 4px 8px;
-        }
-
-        .hero {
-            padding: 80px 0 30px;
-            text-align: center;
-            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%);
-        }
-
-        .hero h1 {
-            font-size: 1.6rem;
-            font-weight: 700;
-            margin-bottom: 8px;
-        }
-        .hero h1 span {
-            background: linear-gradient(135deg, var(--primary), var(--secondary));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-        .hero p {
-            font-size: 0.9rem;
-            opacity: 0.7;
-            max-width: 400px;
-            margin: 0 auto 16px;
-        }
-
-        .btn {
-            padding: 10px 20px;
-            border-radius: var(--radius);
-            font-weight: 600;
-            border: none;
-            cursor: pointer;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 6px;
-            transition: all 0.2s;
-            font-size: 0.85rem;
-            text-decoration: none;
-            touch-action: manipulation;
-            min-height: 44px;
-        }
+        .btn-login { background: var(--primary); color: white !important; padding: 4px 12px !important; border-radius: 20px !important; font-size: 0.7rem !important; }
+        .mobile-menu-btn { display: none; background: none; border: none; color: white; font-size: 1.2rem; cursor: pointer; padding: 4px 8px; }
+        .hero { padding: 80px 0 30px; text-align: center; background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%); }
+        .hero h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 8px; }
+        .hero h1 span { background: linear-gradient(135deg, var(--primary), var(--secondary)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .hero p { font-size: 0.9rem; opacity: 0.7; max-width: 400px; margin: 0 auto 16px; }
+        .btn { padding: 10px 20px; border-radius: var(--radius); font-weight: 600; border: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; transition: all 0.2s; font-size: 0.85rem; text-decoration: none; touch-action: manipulation; min-height: 44px; }
         .btn:active { transform: scale(0.96); }
-
         .btn-primary { background: linear-gradient(135deg, var(--primary), var(--secondary)); color: white; }
         .btn-secondary { background: transparent; border: 1.5px solid var(--primary); color: white; }
         .btn-success { background: var(--success); color: white; }
         .btn-danger { background: var(--danger); color: white; }
         .btn-sm { padding: 4px 12px; font-size: 0.7rem; min-height: 30px; }
-
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 8px;
-            padding: 16px 0;
-        }
-
-        .stat-card {
-            background: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 12px;
-            text-align: center;
-        }
+        .stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; padding: 16px 0; }
+        .stat-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; text-align: center; }
         .stat-card .number { font-size: 1.3rem; font-weight: 700; color: var(--primary); }
         .stat-card .label { font-size: 0.65rem; opacity: 0.6; margin-top: 2px; }
         .stat-card .profit { color: var(--success); }
         .stat-card .loss { color: var(--danger); }
-
-        .dashboard-grid {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 12px;
-            padding: 12px 0;
-        }
-
-        .panel {
-            background: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 12px;
-        }
-
-        .panel-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-bottom: 10px;
-        }
+        .dashboard-grid { display: grid; grid-template-columns: 1fr; gap: 12px; padding: 12px 0; }
+        .panel { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
+        .panel-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
         .panel-header h3 { font-size: 0.95rem; display: flex; align-items: center; gap: 6px; }
-        .panel-header .badge {
-            padding: 2px 10px;
-            border-radius: 20px;
-            font-size: 0.6rem;
-            background: var(--danger);
-            color: white;
-        }
+        .panel-header .badge { padding: 2px 10px; border-radius: 20px; font-size: 0.6rem; background: var(--danger); color: white; }
         .panel-header .badge.connected { background: var(--success); }
-
         .trade-form { display: grid; gap: 8px; }
-        .trade-form select, .trade-form input {
-            padding: 10px 12px;
-            border-radius: 8px;
-            border: 1px solid var(--border);
-            background: rgba(255,255,255,0.05);
-            color: white;
-            font-size: 0.85rem;
-            width: 100%;
-            -webkit-appearance: none;
-            appearance: none;
-        }
+        .trade-form select, .trade-form input { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: rgba(255,255,255,0.05); color: white; font-size: 0.85rem; width: 100%; -webkit-appearance: none; appearance: none; }
         .trade-form select option { background: var(--dark); }
         .trade-form .trade-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
         .trade-form .trade-buttons .btn { min-height: 48px; font-size: 0.9rem; }
-
-        .signal-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 8px 0;
-            border-bottom: 1px solid var(--border);
-            flex-wrap: wrap;
-            gap: 4px;
-        }
+        .signal-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 4px; }
         .signal-item:last-child { border-bottom: none; }
-        .signal-type {
-            padding: 2px 10px;
-            border-radius: 20px;
-            font-size: 0.65rem;
-            font-weight: 600;
-        }
+        .signal-type { padding: 2px 10px; border-radius: 20px; font-size: 0.65rem; font-weight: 600; }
         .signal-type.buy { background: rgba(16, 185, 129, 0.2); color: var(--success); }
         .signal-type.sell { background: rgba(239, 68, 68, 0.2); color: var(--danger); }
         .signal-type.hold { background: rgba(245, 158, 11, 0.2); color: var(--warning); }
         .signal-confidence { color: var(--warning); font-weight: 600; }
-
         .robot-controls { display: flex; flex-direction: column; gap: 10px; }
-        .robot-status {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 10px;
-            border-radius: 8px;
-            background: rgba(255,255,255,0.03);
-            flex-wrap: wrap;
-        }
-        .robot-status .status-dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            flex-shrink: 0;
-        }
-        .robot-status .status-dot.active {
-            background: var(--success);
-            animation: pulse 1.5s infinite;
-        }
+        .robot-status { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 8px; background: rgba(255,255,255,0.03); flex-wrap: wrap; }
+        .robot-status .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+        .robot-status .status-dot.active { background: var(--success); animation: pulse 1.5s infinite; }
         .robot-status .status-dot.inactive { background: var(--danger); }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.4; }
-        }
-
-        .log-container {
-            max-height: 200px;
-            overflow-y: auto;
-            background: rgba(0,0,0,0.4);
-            border-radius: 6px;
-            padding: 8px;
-            font-family: 'Courier New', monospace;
-            font-size: 0.7rem;
-        }
-
-        .modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.85);
-            z-index: 9999;
-            justify-content: center;
-            align-items: center;
-            padding: 16px;
-        }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        .log-container { max-height: 200px; overflow-y: auto; background: rgba(0,0,0,0.4); border-radius: 6px; padding: 8px; font-family: 'Courier New', monospace; font-size: 0.7rem; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 9999; justify-content: center; align-items: center; padding: 16px; }
         .modal.active { display: flex; }
-
-        .modal-content {
-            background: var(--card-bg);
-            padding: 24px;
-            border-radius: var(--radius);
-            max-width: 380px;
-            width: 100%;
-            max-height: 90vh;
-            overflow-y: auto;
-            position: relative;
-            border: 1px solid var(--border);
-        }
-
-        .modal-close {
-            position: absolute;
-            top: 12px;
-            right: 16px;
-            font-size: 24px;
-            cursor: pointer;
-            color: #666;
-            background: none;
-            border: none;
-        }
+        .modal-content { background: var(--card-bg); padding: 24px; border-radius: var(--radius); max-width: 380px; width: 100%; max-height: 90vh; overflow-y: auto; position: relative; border: 1px solid var(--border); }
+        .modal-close { position: absolute; top: 12px; right: 16px; font-size: 24px; cursor: pointer; color: #666; background: none; border: none; }
         .modal-close:hover { color: white; }
-
-        .modal-content input, .modal-content select {
-            width: 100%;
-            padding: 10px 12px;
-            margin-bottom: 10px;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            background: rgba(255,255,255,0.05);
-            color: white;
-            font-size: 0.85rem;
-            -webkit-appearance: none;
-            appearance: none;
-        }
-
-        .modal-content .login-submit {
-            width: 100%;
-            padding: 12px;
-            background: var(--primary);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-size: 0.95rem;
-            font-weight: 600;
-            cursor: pointer;
-            min-height: 48px;
-        }
-
+        .modal-content input, .modal-content select { width: 100%; padding: 10px 12px; margin-bottom: 10px; border: 1px solid var(--border); border-radius: 8px; background: rgba(255,255,255,0.05); color: white; font-size: 0.85rem; -webkit-appearance: none; appearance: none; }
+        .modal-content .login-submit { width: 100%; padding: 12px; background: var(--primary); color: white; border: none; border-radius: 8px; font-size: 0.95rem; font-weight: 600; cursor: pointer; min-height: 48px; }
         .login-error { color: var(--danger); text-align: center; margin-top: 6px; font-size: 0.8rem; }
         .login-success { color: var(--success); text-align: center; margin-top: 6px; font-size: 0.8rem; }
-
-        .toast-container {
-            position: fixed;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            z-index: 10000;
-            width: 90%;
-            max-width: 400px;
-        }
-        .toast {
-            padding: 12px 16px;
-            border-radius: var(--radius);
-            font-weight: 500;
-            font-size: 0.85rem;
-            animation: slideUp 0.3s ease;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
-            color: white;
-            margin-top: 6px;
-            text-align: center;
-        }
+        .toast-container { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 10000; width: 90%; max-width: 400px; }
+        .toast { padding: 12px 16px; border-radius: var(--radius); font-weight: 500; font-size: 0.85rem; animation: slideUp 0.3s ease; box-shadow: 0 4px 20px rgba(0,0,0,0.4); color: white; margin-top: 6px; text-align: center; }
         .toast-success { background: var(--success); }
         .toast-error { background: var(--danger); }
         .toast-info { background: var(--primary); }
-
-        @keyframes slideUp {
-            from { opacity: 0; transform: translateY(20px) translateX(-50%); }
-            to { opacity: 1; transform: translateY(0) translateX(-50%); }
-        }
-
-        #contactForm input, #contactForm textarea {
-            width: 100%;
-            padding: 10px 12px;
-            margin-bottom: 10px;
-            border-radius: 8px;
-            border: 1px solid var(--border);
-            background: rgba(255,255,255,0.05);
-            color: white;
-            font-size: 0.85rem;
-        }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(20px) translateX(-50%); } to { opacity: 1; transform: translateY(0) translateX(-50%); } }
+        #contactForm input, #contactForm textarea { width: 100%; padding: 10px 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid var(--border); background: rgba(255,255,255,0.05); color: white; font-size: 0.85rem; }
         #contactForm textarea { min-height: 80px; resize: vertical; }
-
-        @media (max-width: 768px) {
-            .mobile-menu-btn { display: block; }
-            .nav-links {
-                display: none;
-                flex-direction: column;
-                position: absolute;
-                top: 54px;
-                left: 0;
-                width: 100%;
-                background: var(--dark);
-                padding: 12px 16px;
-                gap: 6px;
-                border-bottom: 1px solid var(--border);
-            }
-            .nav-links.active { display: flex; }
-            .nav-links a { padding: 8px 12px; font-size: 0.85rem; width: 100%; }
-            .btn-login { padding: 8px 16px !important; font-size: 0.85rem !important; }
-        }
-
-        @media (min-width: 768px) {
-            .stats-grid { grid-template-columns: repeat(4, 1fr); gap: 16px; }
-            .dashboard-grid { grid-template-columns: 2fr 1fr; gap: 16px; }
-            .container { padding: 0 24px; }
-            .hero h1 { font-size: 2.5rem; }
-            .hero { padding: 100px 0 50px; }
-        }
-
-        .broker-indicator {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 10px;
-            font-size: 0.6rem;
-            font-weight: 600;
-            margin-left: 4px;
-        }
+        @media (max-width: 768px) { .mobile-menu-btn { display: block; } .nav-links { display: none; flex-direction: column; position: absolute; top: 54px; left: 0; width: 100%; background: var(--dark); padding: 12px 16px; gap: 6px; border-bottom: 1px solid var(--border); } .nav-links.active { display: flex; } .nav-links a { padding: 8px 12px; font-size: 0.85rem; width: 100%; } .btn-login { padding: 8px 16px !important; font-size: 0.85rem !important; } }
+        @media (min-width: 768px) { .stats-grid { grid-template-columns: repeat(4, 1fr); gap: 16px; } .dashboard-grid { grid-template-columns: 2fr 1fr; gap: 16px; } .container { padding: 0 24px; } .hero h1 { font-size: 2.5rem; } .hero { padding: 100px 0 50px; } }
+        .broker-indicator { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.6rem; font-weight: 600; margin-left: 4px; }
         .broker-mt5 { background: #2563eb; color: white; }
         .broker-mt4 { background: #7c3aed; color: white; }
         .broker-paper { background: #10b981; color: white; }
         .broker-demo { background: #f59e0b; color: black; }
+        .env-notice { background: rgba(245, 158, 11, 0.2); border: 1px solid var(--warning); padding: 8px 12px; border-radius: 8px; font-size: 0.75rem; color: var(--warning); margin-bottom: 10px; text-align: center; }
     </style>
 </head>
 <body>
@@ -1821,7 +1495,7 @@ def create_static_files():
 <section class="hero">
     <div class="container">
         <h1>Trade Smarter with <span>AI-Powered</span> Forex Bot</h1>
-        <p>Automate your trading strategy with our advanced AI robot. Supports MT5 &amp; MT4.</p>
+        <p>Automate your trading strategy with our advanced AI robot. Supports MT5 &amp; MT4 on Windows.</p>
         <div class="hero-buttons">
             <a href="#dashboard" class="btn btn-primary"><i class="fas fa-rocket"></i> Start Trading</a>
             <a href="#robot" class="btn btn-secondary"><i class="fas fa-robot"></i> Explore Bot</a>
@@ -1849,6 +1523,7 @@ def create_static_files():
                     <button class="btn btn-danger btn-sm" onclick="logout()">Logout</button>
                 </div>
             </div>
+            <div class="env-notice" id="envNotice">⚠️ Running in cloud environment - Using Demo/Paper mode</div>
 
             <form class="trade-form" id="tradeForm">
                 <select id="tradeSymbol">
@@ -1952,6 +1627,7 @@ def create_static_files():
         <button class="modal-close" onclick="closeLoginModal()">&times;</button>
         <h2>🔐 Login to Broker</h2>
         <p class="subtitle">Enter your MT5 or MT4 account credentials</p>
+        <div id="loginEnvNotice" class="env-notice" style="margin-bottom:10px;">⚠️ MT5/MT4 only available on Windows. Use Demo or Paper mode in cloud.</div>
         <form id="loginForm" onsubmit="handleLogin(event)">
             <input type="text" id="loginUsername" placeholder="Username / Login" required>
             <input type="password" id="loginPassword" placeholder="Password" required>
@@ -1959,9 +1635,9 @@ def create_static_files():
             <div style="margin-bottom:10px;">
                 <label style="color:#94a3b8; font-size:0.8rem;">Broker Type</label>
                 <select id="loginBrokerType">
-                    <option value="mt5">MetaTrader 5 (MT5)</option>
-                    <option value="mt4">MetaTrader 4 (MT4)</option>
-                    <option value="paper">Paper Trading</option>
+                    <option value="mt5">MetaTrader 5 (MT5) - Windows Only</option>
+                    <option value="mt4">MetaTrader 4 (MT4) - Windows Only</option>
+                    <option value="paper" selected>Paper Trading</option>
                     <option value="demo">Demo Mode</option>
                 </select>
             </div>
@@ -2071,10 +1747,17 @@ function updateBrokerUI(connected, type) {
         badge.innerHTML = 'Connected <span class="broker-indicator broker-' + brokerClass + '">' + type + '</span>';
         badge.className = 'badge connected';
         document.getElementById('navLoginBtn').innerHTML = '<i class="fas fa-user"></i> ' + (type || 'Connected');
+        // Hide environment notice if connected to real broker
+        if (type === 'MT5' || type === 'MT4') {
+            document.getElementById('envNotice').style.display = 'none';
+        } else {
+            document.getElementById('envNotice').style.display = 'block';
+        }
     } else {
         badge.textContent = 'Disconnected';
         badge.className = 'badge';
         document.getElementById('navLoginBtn').innerHTML = '<i class="fas fa-user"></i> Login';
+        document.getElementById('envNotice').style.display = 'block';
     }
 }
 
@@ -2303,13 +1986,15 @@ if __name__ == '__main__':
     print("=" * 70)
     print(f"📊 Dashboard: http://localhost:5000")
     print("=" * 70)
-    print("🔐 Supports: MT5, MT4, Paper Trading, Demo Mode")
-    print("📈 BUY/SELL now work correctly")
-    print("❌ Close trade works properly")
-    print("📱 Mobile-optimized responsive design")
+    print(f"💻 Platform: {sys.platform}")
+    print(f"🔐 MT5/MT4 Available: {'Yes (Windows)' if BOT_AVAILABLE and IS_WINDOWS else 'No (Use Demo/Paper mode)'}")
     print("=" * 70)
-    print("⚠️  Make sure MetaTrader5 is installed: pip install MetaTrader5")
-    print("⚠️  Make sure MT5/MT4 terminal is installed on your computer")
+    print("📋 Supported Modes:")
+    print("  ✅ Demo Mode - No credentials needed, simulated trading")
+    print("  ✅ Paper Trading - Virtual account with $100,000")
+    print("  ✅ MT5/MT4 - Only on Windows with MetaTrader5 installed")
+    print("=" * 70)
+    print("📱 Mobile-optimized responsive design")
     print("=" * 70)
     print("Press Ctrl+C to stop")
     print("=" * 70)
