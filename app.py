@@ -549,7 +549,7 @@ def login():
                 return jsonify({'success': False, 'error': error_msg})
 
             # Login
-            login_result = mt5.login(int(username), password, server)
+            login_result = mt5.login(int(username) if username.isdigit() else username, password, server)
             if login_result:
                 account = mt5.account_info()
                 if account:
@@ -1374,112 +1374,115 @@ def handle_connect():
         emit('signal_update', bot_state['signals'][0])
 
 # ============================================================
-# CREATE HTML TEMPLATE (same as before - kept minimal for space)
+# CREATE HTML TEMPLATE
 # ============================================================
 
 def create_static_files():
     os.makedirs('templates', exist_ok=True)
     
-    # HTML template - same as previous but with updated title
     with open('templates/index.html', 'w', encoding='utf-8') as f:
         f.write('''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Forex Bot - MT5/MT4</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ultimate Forex Bot - AI Trading Platform</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-        :root { --primary: #2563eb; --secondary: #7c3aed; --success: #10b981; --danger: #ef4444; --warning: #f59e0b; --dark: #0a0a0a; --card-bg: #141414; --text: #e2e8f0; --text-muted: #888888; --border: #2a2a2a; --radius: 12px; }
-        html, body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--dark); color: var(--text); font-size: 14px; line-height: 1.5; overflow-x: hidden; }
-        ::-webkit-scrollbar { width: 3px; }
-        ::-webkit-scrollbar-track { background: var(--dark); }
-        ::-webkit-scrollbar-thumb { background: var(--primary); border-radius: 10px; }
-        .container { max-width: 100%; padding: 0 12px; margin: 0 auto; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root { --primary: #2563eb; --secondary: #7c3aed; --success: #10b981; --danger: #ef4444; --warning: #f59e0b; --dark: #0a0a0a; --text: #e2e8f0; --card-bg: #141414; --border: #2a2a2a; --radius: 12px; }
+        body { font-family: 'Inter', sans-serif; background: var(--dark); color: var(--text); }
         .navbar { background: rgba(10, 10, 10, 0.95); padding: 10px 0; position: fixed; top: 0; width: 100%; z-index: 1000; border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); }
-        .nav-container { display: flex; justify-content: space-between; align-items: center; padding: 0 12px; }
-        .logo { font-size: 1.1rem; font-weight: 700; color: var(--primary); text-decoration: none; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+        .nav-container { display: flex; justify-content: space-between; align-items: center; }
+        .logo { font-size: 1.5rem; font-weight: 700; color: var(--primary); text-decoration: none; }
         .logo span { color: var(--warning); }
-        .nav-links { display: flex; list-style: none; gap: 4px; align-items: center; flex-wrap: wrap; }
-        .nav-links a { color: var(--text-muted); text-decoration: none; font-weight: 500; font-size: 0.7rem; padding: 4px 8px; border-radius: 6px; transition: 0.3s; }
+        .nav-links { display: flex; list-style: none; gap: 1.5rem; align-items: center; flex-wrap: wrap; }
+        .nav-links a { color: var(--text); text-decoration: none; font-weight: 500; transition: 0.3s; padding: 8px 12px; border-radius: 6px; }
         .nav-links a:hover { color: white; background: rgba(37, 99, 235, 0.2); }
-        .btn-login { background: var(--primary); color: white !important; padding: 4px 12px !important; border-radius: 20px !important; font-size: 0.7rem !important; }
-        .mobile-menu-btn { display: none; background: none; border: none; color: white; font-size: 1.2rem; cursor: pointer; padding: 4px 8px; }
-        .hero { padding: 80px 0 30px; text-align: center; background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%); }
-        .hero h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 8px; }
+        .btn-login { background: var(--primary); color: white !important; padding: 10px 24px !important; border-radius: 25px !important; }
+        .btn-login:hover { background: #1d4ed8 !important; transform: translateY(-2px); }
+        .hero { padding: 120px 0 60px; text-align: center; background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%); }
+        .hero h1 { font-size: 3rem; font-weight: 700; margin-bottom: 1rem; }
         .hero h1 span { background: linear-gradient(135deg, var(--primary), var(--secondary)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        .hero p { font-size: 0.9rem; opacity: 0.7; max-width: 400px; margin: 0 auto 16px; }
-        .btn { padding: 10px 20px; border-radius: var(--radius); font-weight: 600; border: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; transition: all 0.2s; font-size: 0.85rem; text-decoration: none; touch-action: manipulation; min-height: 44px; }
-        .btn:active { transform: scale(0.96); }
+        .hero p { font-size: 1.2rem; opacity: 0.8; max-width: 600px; margin: 0 auto 2rem; }
+        .btn { padding: 12px 32px; border-radius: 8px; font-weight: 600; border: none; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; transition: 0.3s; text-decoration: none; }
         .btn-primary { background: linear-gradient(135deg, var(--primary), var(--secondary)); color: white; }
-        .btn-secondary { background: transparent; border: 1.5px solid var(--primary); color: white; }
+        .btn-primary:hover { transform: translateY(-3px); box-shadow: 0 10px 30px rgba(37, 99, 235, 0.3); }
+        .btn-secondary { background: transparent; border: 2px solid var(--primary); color: white; }
+        .btn-secondary:hover { background: var(--primary); }
         .btn-success { background: var(--success); color: white; }
         .btn-danger { background: var(--danger); color: white; }
-        .btn-sm { padding: 4px 12px; font-size: 0.7rem; min-height: 30px; }
-        .stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; padding: 16px 0; }
-        .stat-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; text-align: center; }
-        .stat-card .number { font-size: 1.3rem; font-weight: 700; color: var(--primary); }
-        .stat-card .label { font-size: 0.65rem; opacity: 0.6; margin-top: 2px; }
+        .btn-warning { background: var(--warning); color: black; }
+        .btn-sm { padding: 6px 14px; font-size: 0.8rem; }
+        .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.5rem; padding: 40px 0; }
+        .stat-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; text-align: center; }
+        .stat-card:hover { transform: translateY(-5px); background: rgba(255,255,255,0.08); }
+        .stat-card .number { font-size: 2.5rem; font-weight: 700; color: var(--primary); }
+        .stat-card .label { opacity: 0.7; margin-top: 0.5rem; }
         .stat-card .profit { color: var(--success); }
         .stat-card .loss { color: var(--danger); }
-        .dashboard-grid { display: grid; grid-template-columns: 1fr; gap: 12px; padding: 12px 0; }
-        .panel { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
-        .panel-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
-        .panel-header h3 { font-size: 0.95rem; display: flex; align-items: center; gap: 6px; }
-        .panel-header .badge { padding: 2px 10px; border-radius: 20px; font-size: 0.6rem; background: var(--danger); color: white; }
+        .dashboard-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 2rem; padding: 40px 0; }
+        .panel { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; }
+        .panel-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 1.5rem; }
+        .panel-header h3 { font-size: 1.2rem; }
+        .panel-header .badge { padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; background: var(--danger); color: white; }
         .panel-header .badge.connected { background: var(--success); }
-        .trade-form { display: grid; gap: 8px; }
-        .trade-form select, .trade-form input { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: rgba(255,255,255,0.05); color: white; font-size: 0.85rem; width: 100%; -webkit-appearance: none; appearance: none; }
+        .trade-form { display: grid; gap: 1rem; }
+        .trade-form select, .trade-form input { padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); background: rgba(255,255,255,0.05); color: white; font-size: 1rem; }
         .trade-form select option { background: var(--dark); }
-        .trade-form .trade-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-        .trade-form .trade-buttons .btn { min-height: 48px; font-size: 0.9rem; }
-        .signal-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 4px; }
-        .signal-item:last-child { border-bottom: none; }
-        .signal-type { padding: 2px 10px; border-radius: 20px; font-size: 0.65rem; font-weight: 600; }
+        .trade-form .trade-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+        .signal-item { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 5px; }
+        .signal-type { padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; }
         .signal-type.buy { background: rgba(16, 185, 129, 0.2); color: var(--success); }
         .signal-type.sell { background: rgba(239, 68, 68, 0.2); color: var(--danger); }
         .signal-type.hold { background: rgba(245, 158, 11, 0.2); color: var(--warning); }
-        .signal-confidence { color: var(--warning); font-weight: 600; }
-        .robot-controls { display: flex; flex-direction: column; gap: 10px; }
-        .robot-status { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 8px; background: rgba(255,255,255,0.03); flex-wrap: wrap; }
-        .robot-status .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-        .robot-status .status-dot.active { background: var(--success); animation: pulse 1.5s infinite; }
+        .signal-confidence { color: var(--warning); }
+        .robot-controls { display: flex; flex-direction: column; gap: 1rem; }
+        .robot-status { display: flex; align-items: center; gap: 1rem; padding: 12px; border-radius: 8px; background: rgba(255,255,255,0.05); flex-wrap: wrap; }
+        .robot-status .status-dot { width: 12px; height: 12px; border-radius: 50%; }
+        .robot-status .status-dot.active { background: var(--success); animation: pulse 2s infinite; }
         .robot-status .status-dot.inactive { background: var(--danger); }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-        .log-container { max-height: 200px; overflow-y: auto; background: rgba(0,0,0,0.4); border-radius: 6px; padding: 8px; font-family: 'Courier New', monospace; font-size: 0.7rem; }
-        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 9999; justify-content: center; align-items: center; padding: 16px; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .robot-config { display: grid; gap: 0.5rem; }
+        .robot-config label { font-size: 0.9rem; opacity: 0.7; }
+        .robot-config select, .robot-config input { padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border); background: rgba(255,255,255,0.05); color: white; }
+        .log-container { max-height: 300px; overflow-y: auto; background: rgba(0,0,0,0.3); border-radius: 6px; padding: 10px; font-family: 'Consolas', monospace; font-size: 0.8rem; }
+        .log-entry { padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .log-time { color: #666; }
+        .log-message { color: #aaa; }
+        .log-message.success { color: #00ff88; }
+        .log-message.error { color: #ff4444; }
+        .log-message.warning { color: #ffaa00; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; justify-content: center; align-items: center; }
         .modal.active { display: flex; }
-        .modal-content { background: var(--card-bg); padding: 24px; border-radius: var(--radius); max-width: 380px; width: 100%; max-height: 90vh; overflow-y: auto; position: relative; border: 1px solid var(--border); }
-        .modal-close { position: absolute; top: 12px; right: 16px; font-size: 24px; cursor: pointer; color: #666; background: none; border: none; }
+        .modal-content { background: #1e293b; padding: 40px; border-radius: 16px; max-width: 420px; width: 90%; position: relative; max-height: 90vh; overflow-y: auto; }
+        .modal-close { position: absolute; top: 15px; right: 20px; font-size: 28px; cursor: pointer; color: #666; transition: 0.3s; background: none; border: none; }
         .modal-close:hover { color: white; }
-        .modal-content input, .modal-content select { width: 100%; padding: 10px 12px; margin-bottom: 10px; border: 1px solid var(--border); border-radius: 8px; background: rgba(255,255,255,0.05); color: white; font-size: 0.85rem; -webkit-appearance: none; appearance: none; }
-        .modal-content .login-submit { width: 100%; padding: 12px; background: var(--primary); color: white; border: none; border-radius: 8px; font-size: 0.95rem; font-weight: 600; cursor: pointer; min-height: 48px; }
-        .login-error { color: var(--danger); text-align: center; margin-top: 6px; font-size: 0.8rem; }
-        .login-success { color: var(--success); text-align: center; margin-top: 6px; font-size: 0.8rem; }
-        .toast-container { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 10000; width: 90%; max-width: 400px; }
-        .toast { padding: 12px 16px; border-radius: var(--radius); font-weight: 500; font-size: 0.85rem; animation: slideUp 0.3s ease; box-shadow: 0 4px 20px rgba(0,0,0,0.4); color: white; margin-top: 6px; text-align: center; }
+        .modal-content h2 { text-align: center; margin-bottom: 8px; font-size: 28px; }
+        .modal-content .subtitle { text-align: center; color: #94a3b8; margin-bottom: 24px; font-size: 14px; }
+        .modal-content input { width: 100%; padding: 12px; margin-bottom: 12px; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; background: rgba(255,255,255,0.05); color: white; font-size: 15px; }
+        .modal-content input:focus { outline: none; border-color: var(--primary); }
+        .modal-content .login-submit { width: 100%; padding: 14px; background: var(--primary); color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; transition: 0.3s; }
+        .modal-content .login-submit:hover { background: #1d4ed8; }
+        .login-error { color: var(--danger); text-align: center; margin-top: 8px; font-size: 14px; }
+        .login-success { color: var(--success); text-align: center; margin-top: 8px; font-size: 14px; }
+        .toast-container { position: fixed; bottom: 30px; right: 30px; z-index: 10000; }
+        .toast { padding: 16px 24px; border-radius: 12px; font-weight: 500; min-width: 280px; animation: slideUp 0.3s ease; box-shadow: 0 10px 40px rgba(0,0,0,0.2); color: white; margin-top: 10px; }
         .toast-success { background: var(--success); }
         .toast-error { background: var(--danger); }
         .toast-info { background: var(--primary); }
-        @keyframes slideUp { from { opacity: 0; transform: translateY(20px) translateX(-50%); } to { opacity: 1; transform: translateY(0) translateX(-50%); } }
-        #contactForm input, #contactForm textarea { width: 100%; padding: 10px 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid var(--border); background: rgba(255,255,255,0.05); color: white; font-size: 0.85rem; }
-        #contactForm textarea { min-height: 80px; resize: vertical; }
-        @media (max-width: 768px) { .mobile-menu-btn { display: block; } .nav-links { display: none; flex-direction: column; position: absolute; top: 54px; left: 0; width: 100%; background: var(--dark); padding: 12px 16px; gap: 6px; border-bottom: 1px solid var(--border); } .nav-links.active { display: flex; } .nav-links a { padding: 8px 12px; font-size: 0.85rem; width: 100%; } .btn-login { padding: 8px 16px !important; font-size: 0.85rem !important; } }
-        @media (min-width: 768px) { .stats-grid { grid-template-columns: repeat(4, 1fr); gap: 16px; } .dashboard-grid { grid-template-columns: 2fr 1fr; gap: 16px; } .container { padding: 0 24px; } .hero h1 { font-size: 2.5rem; } .hero { padding: 100px 0 50px; } }
-        .broker-indicator { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.6rem; font-weight: 600; margin-left: 4px; }
-        .broker-mt5 { background: #2563eb; color: white; }
-        .broker-mt4 { background: #7c3aed; color: white; }
-        .broker-paper { background: #10b981; color: white; }
-        .broker-demo { background: #f59e0b; color: black; }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .mobile-menu-btn { display: none; background: none; border: none; color: white; font-size: 24px; cursor: pointer; }
         .env-notice { background: rgba(245, 158, 11, 0.2); border: 1px solid var(--warning); padding: 8px 12px; border-radius: 8px; font-size: 0.75rem; color: var(--warning); margin-bottom: 10px; text-align: center; }
+        @media (max-width: 768px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } .dashboard-grid { grid-template-columns: 1fr; } .hero h1 { font-size: 2rem; } .mobile-menu-btn { display: block; } .nav-links { display: none; } .nav-links.active { display: flex; flex-direction: column; position: absolute; top: 70px; left: 0; width: 100%; background: var(--dark); padding: 20px; gap: 1rem; } }
     </style>
 </head>
 <body>
 
 <nav class="navbar">
-    <div class="nav-container">
+    <div class="container nav-container">
         <a href="#" class="logo">Ultimate <span>FX</span></a>
         <button class="mobile-menu-btn" id="mobileMenuBtn"><i class="fas fa-bars"></i></button>
         <ul class="nav-links" id="navLinks">
@@ -1495,7 +1498,7 @@ def create_static_files():
 <section class="hero">
     <div class="container">
         <h1>Trade Smarter with <span>AI-Powered</span> Forex Bot</h1>
-        <p>Automate your trading strategy with our advanced AI robot. Supports MT5 &amp; MT4 on Windows.</p>
+        <p>Automate your trading strategy with our advanced AI robot.</p>
         <div class="hero-buttons">
             <a href="#dashboard" class="btn btn-primary"><i class="fas fa-rocket"></i> Start Trading</a>
             <a href="#robot" class="btn btn-secondary"><i class="fas fa-robot"></i> Explore Bot</a>
@@ -1517,9 +1520,9 @@ def create_static_files():
         <div class="panel">
             <div class="panel-header">
                 <h3><i class="fas fa-chart-line"></i> Trade Now</h3>
-                <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+                <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
                     <span class="badge" id="connectionBadge">Disconnected</span>
-                    <span id="userDisplay" style="font-size:0.7rem; color:#888;"></span>
+                    <span id="userDisplay" style="font-size:0.8rem; color:#888;"></span>
                     <button class="btn btn-danger btn-sm" onclick="logout()">Logout</button>
                 </div>
             </div>
@@ -1541,14 +1544,14 @@ def create_static_files():
                 <input type="number" id="tradeStopLoss" placeholder="Stop Loss (optional)" step="0.0001">
                 <input type="number" id="tradeTakeProfit" placeholder="Take Profit (optional)" step="0.0001">
                 <div class="trade-buttons">
-                    <button type="button" class="btn btn-success" onclick="placeTrade('buy')"><i class="fas fa-arrow-up"></i> BUY</button>
-                    <button type="button" class="btn btn-danger" onclick="placeTrade('sell')"><i class="fas fa-arrow-down"></i> SELL</button>
+                    <button type="button" class="btn btn-success" id="tradeBuyBtn" onclick="placeTrade('buy')"><i class="fas fa-arrow-up"></i> BUY</button>
+                    <button type="button" class="btn btn-danger" id="tradeSellBtn" onclick="placeTrade('sell')"><i class="fas fa-arrow-down"></i> SELL</button>
                 </div>
             </form>
 
-            <div style="margin-top: 12px;">
-                <h4 style="font-size:0.85rem;">Open Positions</h4>
-                <div id="openTrades"><p style="opacity:0.5; text-align:center; font-size:0.8rem;">No open trades</p></div>
+            <div style="margin-top: 1.5rem;">
+                <h4>Open Positions</h4>
+                <div id="openTrades"><p style="opacity:0.5; text-align:center;">No open trades</p></div>
             </div>
         </div>
 
@@ -1557,11 +1560,11 @@ def create_static_files():
                 <h3><i class="fas fa-bullhorn"></i> Live Signals</h3>
                 <button class="btn btn-primary btn-sm" onclick="generateSignal()"><i class="fas fa-sync"></i> Generate</button>
             </div>
-            <div id="signalsList"><p style="opacity:0.5; text-align:center; font-size:0.8rem;">No signals available</p></div>
+            <div id="signalsList"><p style="opacity:0.5; text-align:center;">No signals available</p></div>
 
-            <div style="margin-top: 10px;">
-                <h4 style="font-size:0.85rem;">Trade Log</h4>
-                <div class="log-container" id="tradeLogs"><p style="opacity:0.5; text-align:center; font-size:0.7rem;">No trades executed</p></div>
+            <div style="margin-top: 1rem;">
+                <h4>Trade Log</h4>
+                <div class="log-container" id="tradeLogs"><p style="opacity:0.5; text-align:center;">No trades executed</p></div>
             </div>
         </div>
     </div>
@@ -1599,7 +1602,7 @@ def create_static_files():
 
         <div class="panel">
             <div class="panel-header"><h3><i class="fas fa-chart-pie"></i> Performance</h3></div>
-            <div style="display:grid; gap:4px; font-size:0.85rem;">
+            <div style="display:grid; gap:0.5rem;">
                 <div style="display:flex; justify-content:space-between;"><span>Total Trades</span><span id="perfTotalTrades">0</span></div>
                 <div style="display:flex; justify-content:space-between;"><span>Winning Trades</span><span id="perfWins" style="color:var(--success);">0</span></div>
                 <div style="display:flex; justify-content:space-between;"><span>Losing Trades</span><span id="perfLosses" style="color:var(--danger);">0</span></div>
@@ -1610,31 +1613,32 @@ def create_static_files():
     </div>
 </section>
 
-<section class="container" id="contact" style="padding:30px 0;">
-    <div class="panel" style="max-width:100%; margin:0;">
-        <h3 style="text-align:center; margin-bottom:12px; font-size:1.1rem;">Contact Support</h3>
+<section class="container" id="contact" style="padding:60px 0;">
+    <div class="panel" style="max-width:600px; margin:0 auto;">
+        <h3 style="text-align:center; margin-bottom:1.5rem;">Contact Support</h3>
         <form id="contactForm">
-            <input type="text" id="contactName" placeholder="Your Name" required>
-            <input type="email" id="contactEmail" placeholder="Email" required>
-            <textarea id="contactMessage" placeholder="Your Message" required></textarea>
+            <input type="text" id="contactName" placeholder="Your Name" required style="width:100%; padding:12px; margin-bottom:12px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.05); color:white;">
+            <input type="email" id="contactEmail" placeholder="Email" required style="width:100%; padding:12px; margin-bottom:12px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.05); color:white;">
+            <textarea id="contactMessage" placeholder="Your Message" required style="width:100%; padding:12px; margin-bottom:12px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.05); color:white; min-height:100px;"></textarea>
             <button type="submit" class="btn btn-primary" style="width:100%;"><i class="fas fa-paper-plane"></i> Send Message</button>
         </form>
     </div>
 </section>
 
+<!-- Login Modal -->
 <div class="modal" id="loginModal">
     <div class="modal-content">
         <button class="modal-close" onclick="closeLoginModal()">&times;</button>
         <h2>🔐 Login to Broker</h2>
-        <p class="subtitle">Enter your MT5 or MT4 account credentials</p>
+        <p class="subtitle">Enter your MT5/MT4 account credentials</p>
         <div id="loginEnvNotice" class="env-notice" style="margin-bottom:10px;">⚠️ MT5/MT4 only available on Windows. Use Demo or Paper mode in cloud.</div>
         <form id="loginForm" onsubmit="handleLogin(event)">
             <input type="text" id="loginUsername" placeholder="Username / Login" required>
             <input type="password" id="loginPassword" placeholder="Password" required>
             <input type="text" id="loginServer" placeholder="Server (e.g., Headway-Demo)" value="Headway-Demo">
-            <div style="margin-bottom:10px;">
-                <label style="color:#94a3b8; font-size:0.8rem;">Broker Type</label>
-                <select id="loginBrokerType">
+            <div style="margin-bottom: 12px;">
+                <label style="color:#94a3b8; font-size:14px;">Broker Type</label>
+                <select id="loginBrokerType" style="width:100%; padding:12px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.05); color:white; font-size:15px;">
                     <option value="mt5">MetaTrader 5 (MT5) - Windows Only</option>
                     <option value="mt4">MetaTrader 4 (MT4) - Windows Only</option>
                     <option value="paper" selected>Paper Trading</option>
@@ -1654,6 +1658,7 @@ def create_static_files():
 <script>
 const socket = io();
 
+// Socket events
 socket.on('account_info', function(data) {
     if (data.balance) {
         document.getElementById('balance').textContent = '$' + data.balance.toFixed(2);
@@ -1666,6 +1671,7 @@ socket.on('performance_update', function(data) { updatePerformance(data); });
 socket.on('bot_status', function(data) { updateRobotUI(data.running); });
 socket.on('broker_status', function(data) { updateBrokerUI(data.connected, data.broker_type); });
 socket.on('trade_log', function(data) { updateTradeLogs(data.logs); });
+socket.on('log_message', function(data) { addLogMessage(data.message); });
 
 function showToast(message, type = 'info') {
     const container = document.getElementById('toastContainer');
@@ -1716,8 +1722,8 @@ async function handleLogin(event) {
             showToast('❌ Login failed: ' + result.error, 'error');
         }
     } catch (error) {
-        document.getElementById('loginError').textContent = '❌ Connection error: ' + error.message;
-        showToast('❌ Login error: ' + error.message, 'error');
+        document.getElementById('loginError').textContent = '❌ Connection error';
+        showToast('❌ Login error', 'error');
     }
 }
 
@@ -1743,11 +1749,9 @@ async function logout() {
 function updateBrokerUI(connected, type) {
     const badge = document.getElementById('connectionBadge');
     if (connected) {
-        const brokerClass = type ? type.toLowerCase() : '';
-        badge.innerHTML = 'Connected <span class="broker-indicator broker-' + brokerClass + '">' + type + '</span>';
+        badge.textContent = type + ' Connected';
         badge.className = 'badge connected';
         document.getElementById('navLoginBtn').innerHTML = '<i class="fas fa-user"></i> ' + (type || 'Connected');
-        // Hide environment notice if connected to real broker
         if (type === 'MT5' || type === 'MT4') {
             document.getElementById('envNotice').style.display = 'none';
         } else {
@@ -1764,11 +1768,11 @@ function updateBrokerUI(connected, type) {
 function updateOpenTrades(positions) {
     const container = document.getElementById('openTrades');
     if (!positions || positions.length === 0) {
-        container.innerHTML = '<p style="opacity:0.5; text-align:center; font-size:0.8rem;">No open trades</p>';
+        container.innerHTML = '<p style="opacity:0.5; text-align:center;">No open trades</p>';
         return;
     }
     container.innerHTML = positions.map(p => `
-        <div>
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.05); flex-wrap:wrap; gap:5px;">
             <span>${p.symbol} ${(p.type || '').toUpperCase()} ${p.volume}</span>
             <span style="color: ${p.profit >= 0 ? 'var(--success)' : 'var(--danger)'};">${p.profit >= 0 ? '+' : ''}$${(p.profit || 0).toFixed(2)}</span>
             <button onclick="closeTrade('${p.ticket || p._id}')" class="btn btn-danger btn-sm">Close</button>
@@ -1782,10 +1786,10 @@ function addSignal(signal) {
     const signalDiv = document.createElement('div');
     signalDiv.className = 'signal-item';
     signalDiv.innerHTML = `
-        <span style="font-weight:600;">${signal.symbol}</span>
+        <span>${signal.symbol}</span>
         <span class="signal-type ${signal.type}">${(signal.type || 'HOLD').toUpperCase()}</span>
         <span class="signal-confidence">${(signal.confidence || 0).toFixed(0)}%</span>
-        <span style="font-size:0.65rem; opacity:0.5; width:100%;">${reasons}</span>
+        <span style="font-size:0.7rem; opacity:0.5; width:100%;">${reasons}</span>
     `;
     container.prepend(signalDiv);
     while (container.children.length > 10) container.removeChild(container.lastChild);
@@ -1828,27 +1832,27 @@ function updateRobotUI(running) {
 function updateTradeLogs(logs) {
     const container = document.getElementById('tradeLogs');
     if (!logs || logs.length === 0) {
-        container.innerHTML = '<p style="opacity:0.5; text-align:center; font-size:0.7rem;">No trades executed</p>';
+        container.innerHTML = '<p style="opacity:0.5; text-align:center;">No trades executed</p>';
         return;
     }
     container.innerHTML = logs.slice(-10).reverse().map(log => `
-        <div class="log-entry" style="padding:2px 0; border-bottom:1px solid rgba(255,255,255,0.03);">
-            <span style="color:#666;">[${new Date(log.time).toLocaleTimeString()}]</span>
-            <span style="color:#aaa;">
+        <div class="log-entry">
+            <span class="log-time">[${new Date(log.time).toLocaleTimeString()}]</span>
+            <span class="log-message ${log.status === 'OPEN' ? 'success' : 'warning'}">
                 ${log.type} ${log.symbol} ${log.volume} @ ${log.entry.toFixed(5)}
                 ${log.status === 'CLOSED' ? ` Profit: $${(log.profit || 0).toFixed(2)}` : ''}
+                ${log.reasons ? ' | ' + log.reasons.join(' • ') : ''}
             </span>
         </div>
     `).join('');
 }
 
+function addLogMessage(message) {}
+
 async function apiRequest(endpoint, method = 'GET', data = null) {
     const options = { method, headers: { 'Content-Type': 'application/json' } };
     if (data && (method === 'POST' || method === 'PUT')) options.body = JSON.stringify(data);
     const response = await fetch(endpoint, options);
-    if (!response.ok) {
-        throw new Error('HTTP ' + response.status + ': ' + response.statusText);
-    }
     return response.json();
 }
 
@@ -1867,11 +1871,12 @@ function placeTrade(tradeType) {
     }).then(result => {
         if (result.success) {
             showToast('✅ ' + tradeType.toUpperCase() + ' trade placed!', 'success');
+            document.getElementById('tradeForm').reset();
         } else {
             showToast('❌ Failed: ' + (result.error || 'Unknown'), 'error');
         }
     }).catch(error => {
-        showToast('❌ Failed to place trade: ' + error.message, 'error');
+        showToast('❌ Failed to place trade', 'error');
     });
 }
 
@@ -1885,7 +1890,7 @@ async function closeTrade(tradeId) {
             showToast('❌ Failed to close trade: ' + (result.error || 'Unknown'), 'error');
         }
     } catch (error) {
-        showToast('❌ Failed to close trade: ' + error.message, 'error');
+        showToast('❌ Failed to close trade', 'error');
     }
 }
 
@@ -1898,7 +1903,7 @@ async function generateSignal() {
             showToast('❌ Failed to generate signal', 'error');
         }
     } catch (error) {
-        showToast('❌ Failed to generate signal: ' + error.message, 'error');
+        showToast('❌ Failed to generate signal', 'error');
     }
 }
 
@@ -1913,7 +1918,7 @@ document.getElementById('robotToggleBtn').addEventListener('click', async functi
             showToast('❌ Failed: ' + (result.error || 'Unknown'), 'error');
         }
     } catch (error) {
-        showToast('❌ Failed to toggle robot: ' + error.message, 'error');
+        showToast('❌ Failed to toggle robot', 'error');
     }
 });
 
@@ -1933,7 +1938,7 @@ document.getElementById('contactForm').addEventListener('submit', async (e) => {
             showToast('❌ Failed to send', 'error');
         }
     } catch (error) {
-        showToast('❌ Failed to send: ' + error.message, 'error');
+        showToast('❌ Failed to send', 'error');
     }
 });
 
@@ -1969,7 +1974,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }, 10000);
 });
 
-console.log('Forex Bot UI loaded!');
+console.log('Ultimate Forex Bot UI loaded!');
 </script>
 </body>
 </html>''')
